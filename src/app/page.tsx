@@ -481,9 +481,9 @@ export default function Home() {
                     {provider === "gmail" && (
                       <>
                         <p className="font-bold text-slate-300">Gmail Setup instructions:</p>
-                        <p>1. Open Gmail and go to **Settings > Forwarding and POP/IMAP**; ensure **IMAP Access** is enabled.</p>
-                        <p>2. Navigate to your Google Account Settings > Security and turn on **2-Step Verification**.</p>
-                        <p>3. Generate an **App Password** for your account. Use this App Password instead of your regular password.</p>
+                        <p>1. Open Gmail and go to <strong>Settings &gt; Forwarding and POP/IMAP</strong>; ensure <strong>IMAP Access</strong> is enabled.</p>
+                        <p>2. Navigate to your Google Account Settings &gt; Security and turn on <strong>2-Step Verification</strong>.</p>
+                        <p>3. Generate an <strong>App Password</strong> for your account. Use this App Password instead of your regular password.</p>
                       </>
                     )}
                     {provider === "custom" && (
@@ -589,7 +589,7 @@ export default function Home() {
                         <p className="font-semibold text-rose-350">Troubleshooting Steps:</p>
                         <ul className="list-disc pl-4 space-y-1 text-slate-400 leading-relaxed">
                           <li>Disable strict fingerprinting blocks in Brave Shields next to the address bar.</li>
-                          <li>Verify "graphics acceleration when available" is toggled ON under settings.</li>
+                          <li>Verify &quot;graphics acceleration when available&quot; is toggled ON under settings.</li>
                           <li>Search Vulkan in `brave://flags` and set to Enabled.</li>
                         </ul>
                       </div>

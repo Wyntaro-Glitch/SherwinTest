@@ -15,8 +15,10 @@
 - [ ] **Text Processing**: Implement a utility to clean and prepare extracted text for the AI model.
 - [ ] **Validation**: Test with various PDF layouts to ensure consistent extraction.
 
-### Phase 3: WebLLM Integration & Prompt Engineering
-- [ ] **Model Loading**: Optimize model selection based on detected VRAM.
+### Phase 3: WebLLM Integration & Hardware Intelligence
+- [ ] **Manual GPU Selection**: Allow users to choose their preferred GPU if multiple adapters are detected (e.g., Integrated vs. Dedicated).
+- [ ] **VRAM Profiling**: Implement logic to detect available RAM/VRAM and determine "safe" model sizes (e.g., <4GB = Tiny models, >8GB = Llama 3).
+- [ ] **Model Selection Logic**: Automatically recommend the best model (Phi-3, Gemma, Llama 3) based on hardware capability, while allowing manual overrides.
 - [ ] **System Prompting**: Implement the "bracket identifier" logic to prevent hallucinations.
 - [ ] **Context Injection**: Feed extracted PDF text into the AI prompt for personalized drafting.
 - [ ] **UI Feedback**: Add loading states and progress bars for model initialization and text generation.
@@ -28,5 +30,6 @@
 
 ## 🛠️ Technical Considerations
 - **Privacy**: Ensure all AI processing remains client-side.
+- **Hardware Fallbacks**: If the detected GPU is incorrect or insufficient, provide a clear UI for the user to select the correct hardware or a lighter model.
 - **Performance**: Use Web Workers for AI tasks to keep the UI responsive.
 - **Error Handling**: Graceful fallbacks for browsers without WebGPU or insufficient VRAM.
