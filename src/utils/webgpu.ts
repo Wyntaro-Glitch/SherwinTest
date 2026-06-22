@@ -21,6 +21,51 @@ export interface WebGPUDetectionResult {
   error?: string;
 }
 
+export interface ModelTierSuggestion {
+  tier: "Tiny" | "Small" | "Medium";
+  modelId: string;
+  modelName: string;
+  description: string;
+}
+
+export function suggestModelTier(limits?: WebGPUDetectionResult["limits"]): ModelTierSuggestion {
+  if (!limits) {
+    return {
+      tier: "Tiny",
+      modelId: "mock-assistant",
+      modelName: "Offline Rule-based Assistant",
+      description: "No GPU limits detected — fallback to rule-based mode.",
+    };
+  }
+
+  const maxBufGB = limits.maxBufferSize / (1024 * 1024 * 1024);
+
+  if (maxBufGB < 1) {
+    return {
+      tier: "Tiny",
+      modelId: "Qwen2.5-0.5B-Instruct-q4f16_1-MLC",
+      modelName: "Qwen 2.5 (0.5B Instruct - Fast)",
+      description: "Limited GPU memory — using smallest model for reliable performance.",
+    };
+  }
+
+  if (maxBufGB < 4) {
+    return {
+      tier: "Small",
+      modelId: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC",
+      modelName: "Qwen 2.5 (1.5B Instruct - Balanced)",
+      description: "Sufficient memory for balanced performance and quality.",
+    };
+  }
+
+  return {
+    tier: "Medium",
+    modelId: "Llama-3-8B-Instruct-q4f16_1-MLC",
+    modelName: "Llama 3 (8B Instruct - Heavy)",
+    description: "Ample GPU memory — full-capability model recommended.",
+  };
+}
+
 export async function detectWebGPUSupport(): Promise<WebGPUDetectionResult> {
   const result: WebGPUDetectionResult = {
     supported: false,

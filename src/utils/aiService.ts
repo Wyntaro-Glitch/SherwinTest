@@ -59,11 +59,11 @@ export class AIService {
     this.isInitializing = true;
     try {
       // Import WebLLM dynamically to avoid server-side build issues
-      const { createWebGPUEngine } = await import("@mlc-ai/web-llm");
+      const { CreateMLCEngine } = await import("@mlc-ai/web-llm");
 
       onProgress({ text: "Initializing WebGPU device...", percent: 10 });
       
-      this.engine = await createWebGPUEngine(modelId, {
+      this.engine = await CreateMLCEngine(modelId, {
         initProgressCallback: (report) => {
           // report.progress is between 0 and 1
           const percent = Math.round(report.progress * 90) + 10;
@@ -111,7 +111,7 @@ export class AIService {
         content: m.text,
       }));
 
-      const response = await this.engine.chat.completions.create({
+      const response = this.engine.chatCompletion({
         messages: [
           {
             role: "system",

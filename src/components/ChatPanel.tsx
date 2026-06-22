@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { ChatMessage } from "@/types";
-import { aiService, AVAILABLE_MODELS, ModelOption } from "@/utils/aiService";
+import { aiService, AVAILABLE_MODELS } from "@/utils/aiService";
+import { detectWebGPUSupport, suggestModelTier } from "@/utils/webgpu";
 
 export default function ChatPanel() {
   const [model, setModel] = useState<string>("mock-assistant");
@@ -8,6 +9,25 @@ export default function ChatPanel() {
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [isEngineLoaded, setIsEngineLoaded] = useState(aiService.isEngineActive());
   const [isInitializing, setIsInitializing] = useState(false);
+
+  // Auto-detect hardware and preselect recommended model tier
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await detectWebGPUSupport();
+        if (!cancelled && result.deviceCreated && result.limits) {
+          const suggestion = suggestModelTier(result.limits);
+          if (suggestion.modelId !== "mock-assistant") {
+            setModel(suggestion.modelId);
+          }
+        }
+      } catch {
+        // Silently fall back to default mock-assistant
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: "welcome",
