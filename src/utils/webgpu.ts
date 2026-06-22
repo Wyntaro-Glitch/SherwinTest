@@ -2,6 +2,8 @@
  * WebGPU Hardware Detection Utility
  */
 
+import { detectBrowser, BrowserDetectionResult } from "./browser";
+
 export interface WebGPUDetectionResult {
   supported: boolean;
   adapterCreated: boolean;
@@ -18,14 +20,22 @@ export interface WebGPUDetectionResult {
     maxComputeWorkgroupStorageSize: number;
     maxComputeInvocationsPerWorkgroup: number;
   };
+  features?: {
+    shaderF16: boolean;
+    missingFeatures: string[];
+  };
+  browser?: BrowserDetectionResult;
   error?: string;
 }
 
 export interface ModelTierSuggestion {
-  tier: "Tiny" | "Small" | "Medium";
+  tier: "Tiny" | "Small" | "Medium" | "Large";
   modelId: string;
   modelName: string;
   description: string;
+  visionModelId?: string;
+  visionModelName?: string;
+  visionDescription?: string;
 }
 
 export function suggestModelTier(limits?: WebGPUDetectionResult["limits"]): ModelTierSuggestion {
@@ -44,25 +54,40 @@ export function suggestModelTier(limits?: WebGPUDetectionResult["limits"]): Mode
     return {
       tier: "Tiny",
       modelId: "Qwen2.5-0.5B-Instruct-q4f16_1-MLC",
-      modelName: "Qwen 2.5 (0.5B Instruct - Fast)",
+      modelName: "Qwen 2.5 (0.5B)",
       description: "Limited GPU memory — using smallest model for reliable performance.",
     };
   }
 
-  if (maxBufGB < 4) {
+  if (maxBufGB < 3) {
     return {
       tier: "Small",
       modelId: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC",
-      modelName: "Qwen 2.5 (1.5B Instruct - Balanced)",
-      description: "Sufficient memory for balanced performance and quality.",
+      modelName: "Qwen 2.5 (1.5B)",
+      description: "Balanced speed and quality for drafting and chat.",
+    };
+  }
+
+  if (maxBufGB < 5) {
+    return {
+      tier: "Medium",
+      modelId: "Phi-3.5-mini-instruct-q4f16_1-MLC",
+      modelName: "Phi-3.5 Mini (3.8B)",
+      description: "High-quality text model with smart reasoning.",
+      visionModelId: "Phi-3.5-vision-instruct-q4f16_1-MLC",
+      visionModelName: "Phi-3.5 Vision (4.2B)",
+      visionDescription: "Adds ability to read images (resumes, screenshots, JDs). Requires ~4 GB VRAM.",
     };
   }
 
   return {
-    tier: "Medium",
-    modelId: "Llama-3-8B-Instruct-q4f16_1-MLC",
-    modelName: "Llama 3 (8B Instruct - Heavy)",
-    description: "Ample GPU memory — full-capability model recommended.",
+    tier: "Large",
+    modelId: "Phi-3.5-vision-instruct-q4f16_1-MLC",
+    modelName: "Phi-3.5 Vision (4.2B)",
+    description: "Best overall — reads images + smart text generation.",
+    visionModelId: "Llama-3-8B-Instruct-q4f16_1-MLC-1k",
+    visionModelName: "Llama 3 (8B)",
+    visionDescription: "Maximum text quality if vision not needed (requires 6.5 GB VRAM).",
   };
 }
 
@@ -76,6 +101,8 @@ export async function detectWebGPUSupport(): Promise<WebGPUDetectionResult> {
   if (typeof window === "undefined") {
     return { ...result, error: "WebGPU can only be detected in the browser." };
   }
+
+  result.browser = await detectBrowser();
 
   if (!navigator.gpu) {
     return { ...result, error: "WebGPU is not supported or is disabled in your browser." };
@@ -121,12 +148,25 @@ export async function detectWebGPUSupport(): Promise<WebGPUDetectionResult> {
       maxComputeInvocationsPerWorkgroup: adapter.limits.maxComputeInvocationsPerWorkgroup,
     };
 
-    // Attempt to request device to verify full driver support
+    // Check required features (shader-f16 is needed by WebLLM models)
+    const adapterFeatures = adapter.features as Set<string>;
+    const hasShaderF16 = adapterFeatures.has("shader-f16");
+    const missingFeatures: string[] = [];
+    if (!hasShaderF16) missingFeatures.push("shader-f16");
+
+    result.features = {
+      shaderF16: hasShaderF16,
+      missingFeatures,
+    };
+
+    // Attempt to request device with required features to verify full driver support
     try {
-      const device = await adapter.requestDevice();
+      const device = await adapter.requestDevice({
+        requiredFeatures: hasShaderF16 ? (["shader-f16"] as any) : [],
+      });
       if (device) {
         result.deviceCreated = true;
-        device.destroy(); // Clean up immediately after detection
+        device.destroy();
       }
     } catch (deviceError: any) {
       result.error = `Failed to create WebGPU device: ${deviceError?.message || deviceError}`;

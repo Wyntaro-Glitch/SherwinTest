@@ -1,57 +1,102 @@
+"use client";
+
 import { useState, useRef, useEffect } from "react";
 import { ChatMessage } from "@/types";
-import { aiService, AVAILABLE_MODELS } from "@/utils/aiService";
-import { detectWebGPUSupport, suggestModelTier } from "@/utils/webgpu";
+import { aiService, AVAILABLE_MODELS, getModelsByCategory, ModelCategory } from "@/utils/aiService";
+import { getProviderConfig, chatCompletion } from "@/utils/aiProvider";
+import { detectWebGPUSupport } from "@/utils/webgpu";
+
+function getProviderLabel(type: string): string {
+  switch (type) {
+    case "ollama": return "Ollama";
+    case "lmstudio": return "LM Studio";
+    case "api": return "API Key";
+    case "webgpu": return "WebGPU";
+    default: return "Mock";
+  }
+}
+
+const APP_KEYWORDS = [
+  "email", "draft", "inbox", "sent", "outreach", "pitch", "template",
+  "sherwinmail", "sherwin", "settings", "provider", "model", "webgpu",
+  "ollama", "lm studio", "theme", "appearance", "privacy", "resume",
+  "cv", "scanner", "dashboard", "mail", "compose", "reply",
+  "smtp", "account", "connection", "task", "scheduler",
+];
+
+function needsWebSearch(text: string): boolean {
+  const lower = text.toLowerCase();
+  return !APP_KEYWORDS.some((kw) => lower.includes(kw));
+}
+
+function buildSystemPrompt(searchContext?: string): string {
+  let prompt = `You are the SherwinMail AI assistant — a privacy-focused, offline-first email outreach and resume optimization platform.
+
+You can help users with:
+- Drafting and optimizing cold outreach emails
+- Resume/CV analysis and improvement (via the Resume Scanner)
+- App settings: AI providers (Ollama, LM Studio, API Key, WebGPU), themes (Dark, Light, Cyberpunk, Sakura, Forest, Ocean), SMTP connections, system tasks
+- General email productivity tips`;
+
+  if (searchContext) {
+    prompt += `\n\n--- Web Search Results ---\n${searchContext}\n---\n\nThe user's question is NOT about the app. Use the search results above to answer their question. If the search results don't contain enough information, use your own knowledge.`;
+  } else {
+    prompt += `\n\nThe user is asking about the app. Answer using your knowledge of SherwinMail's features and tools.`;
+  }
+
+  prompt += `\n\nBe concise, helpful, and accurate. If you're unsure about something, say so rather than making it up.`;
+  return prompt;
+}
 
 export default function ChatPanel() {
   const [model, setModel] = useState<string>("mock-assistant");
   const [statusText, setStatusText] = useState("");
   const [downloadProgress, setDownloadProgress] = useState(0);
-  const [isEngineLoaded, setIsEngineLoaded] = useState(aiService.isEngineActive());
+  const [isEngineLoaded, setIsEngineLoaded] = useState(false);
   const [isInitializing, setIsInitializing] = useState(false);
+  const [providerLabel, setProviderLabel] = useState("Mock");
+  const [isSearching, setIsSearching] = useState(false);
+  const [featureWarning, setFeatureWarning] = useState("");
 
-  // Auto-detect hardware and preselect recommended model tier
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const result = await detectWebGPUSupport();
-        if (!cancelled && result.deviceCreated && result.limits) {
-          const suggestion = suggestModelTier(result.limits);
-          if (suggestion.modelId !== "mock-assistant") {
-            setModel(suggestion.modelId);
-          }
+    const config = getProviderConfig();
+    if (config.provider === "auto" || config.provider === "webgpu") {
+      setIsEngineLoaded(aiService.isEngineActive());
+      setProviderLabel("WebGPU");
+      detectWebGPUSupport().then((r) => {
+        if (r.features && !r.features.shaderF16) {
+          setFeatureWarning(
+            "Your GPU is missing the 'shader-f16' feature required for WebLLM models. " +
+            "Try Chrome or Edge, or update your GPU drivers. Brave users: enable brave://flags/#enable-unsafe-webgpu."
+          );
         }
-      } catch {
-        // Silently fall back to default mock-assistant
-      }
-    })();
-    return () => { cancelled = true; };
+      });
+    } else {
+      setProviderLabel(getProviderLabel(config.provider));
+      setIsEngineLoaded(true);
+    }
   }, []);
+
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: "welcome",
       sender: "assistant",
-      text: "Hello! I am your privacy-centric AI outreach assistant. How can I help you draft your outreach templates today?",
+      text: "Hi! I'm the SherwinMail assistant. Ask me about the app — email drafts, settings, themes, resume scanning, or how things work. For general questions, I'll search the web for answers.",
       timestamp: new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
     },
   ]);
   const [inputValue, setInputValue] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
-  
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Scroll to bottom of message thread
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isGenerating]);
 
-  // Load selected WebLLM model
   const handleLoadModel = async () => {
     setIsInitializing(true);
     setDownloadProgress(0);
     setStatusText("Initializing engine...");
-
     try {
       await aiService.initEngine(model, (progress) => {
         setStatusText(progress.text);
@@ -64,29 +109,24 @@ export default function ChatPanel() {
         {
           id: `sys-${Date.now()}`,
           sender: "assistant",
-          text: `Successfully loaded model: **${
-            AVAILABLE_MODELS.find((m) => m.id === model)?.name || model
-          }**. I am now running 100% locally in your browser.`,
+          text: `Loaded **${(() => { const m = AVAILABLE_MODELS.find((m) => m.id === model); return m ? `${m.name} (${m.description})` : model; })()}**. Running 100% locally.`,
           timestamp: new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
         },
       ]);
     } catch (e: any) {
       console.error(e);
-      setStatusText(`Error loading model: ${e?.message || e}. Using offline rule simulator.`);
-      setIsEngineLoaded(true); // fallbacks active
+      setStatusText(`Error loading model: ${e?.message || e}. Using fallback.`);
+      setIsEngineLoaded(true);
     } finally {
       setIsInitializing(false);
     }
   };
 
-  // Run chat request
   const handleSendMessage = async (textToSend?: string) => {
     const messageText = textToSend || inputValue;
-    if (!messageText.trim()) return;
-
+    if (!messageText.trim() || isGenerating) return;
     if (!textToSend) setInputValue("");
 
-    // Create user message
     const userMessage: ChatMessage = {
       id: `user-${Date.now()}`,
       sender: "user",
@@ -98,29 +138,72 @@ export default function ChatPanel() {
     setMessages(updatedMessages);
     setIsGenerating(true);
 
-    // Create temporary AI message container
     const aiMessageId = `ai-${Date.now()}`;
-    const aiMessage: ChatMessage = {
-      id: aiMessageId,
-      sender: "assistant",
-      text: "",
-      timestamp: new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
-    };
-
-    setMessages((prev) => [...prev, aiMessage]);
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: aiMessageId,
+        sender: "assistant",
+        text: "",
+        timestamp: new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
+      },
+    ]);
 
     try {
-      await aiService.getChatCompletion(updatedMessages, (chunk) => {
+      const config = getProviderConfig();
+      const isExternal = needsWebSearch(messageText);
+      let searchContext: string | undefined;
+
+      if (isExternal) {
+        setIsSearching(true);
         setMessages((prev) =>
-          prev.map((msg) => (msg.id === aiMessageId ? { ...msg, text: chunk } : msg))
+          prev.map((m) =>
+            m.id === aiMessageId ? { ...m, text: "Searching the web..." } : m
+          )
         );
-      });
+
+        try {
+          const res = await fetch(`/api/search?q=${encodeURIComponent(messageText)}`);
+          const data = await res.json();
+          if (data.ok && data.results?.length > 0) {
+            searchContext = data.results.map((r: any, i: number) =>
+              `${i + 1}. ${r.title}\n   ${r.snippet}\n   ${r.url}`
+            ).join("\n\n");
+            if (data.abstract) {
+              searchContext = `Summary: ${data.abstract}\n\n${searchContext}`;
+            }
+          }
+        } catch {
+          // search failed — fall back to model knowledge
+        }
+        setIsSearching(false);
+      }
+
+      if (config.provider === "ollama" || config.provider === "lmstudio" || config.provider === "api") {
+        await chatCompletion({
+          messages: [
+            { role: "system", content: buildSystemPrompt(searchContext) },
+            ...updatedMessages.map((m) => ({ role: m.sender as "user" | "assistant", content: m.text })),
+          ],
+          onChunk: (chunk) => {
+            setMessages((prev) =>
+              prev.map((msg) => (msg.id === aiMessageId ? { ...msg, text: chunk } : msg))
+            );
+          },
+        });
+      } else {
+        await aiService.getChatCompletion(updatedMessages, (chunk) => {
+          setMessages((prev) =>
+            prev.map((msg) => (msg.id === aiMessageId ? { ...msg, text: chunk } : msg))
+          );
+        });
+      }
     } catch (e: any) {
       console.error(e);
       setMessages((prev) =>
         prev.map((msg) =>
           msg.id === aiMessageId
-            ? { ...msg, text: `Sorry, I encountered an error during generation: ${e?.message || e}` }
+            ? { ...msg, text: `Error: ${e?.message || e}` }
             : msg
         )
       );
@@ -129,51 +212,123 @@ export default function ChatPanel() {
     }
   };
 
-  // Quick suggestions
   const suggestions = [
-    "Draft a pitch for a Next.js Developer role",
-    "List high-converting cold subject lines",
-    "Help me write a follow-up email",
+    "How do I set up an AI provider?",
+    "How does the Resume Scanner work?",
+    "What themes are available?",
+    "What is 1+1?",
   ];
+
+  const isUsingProvider = ["ollama", "lmstudio", "api"].includes(getProviderConfig().provider);
 
   return (
     <div className="flex-1 bg-slate-950 flex flex-col h-full overflow-hidden">
-      
-      {/* Model Selection Header */}
-      <div className="p-4 border-b border-slate-900 bg-slate-950 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
+      <div className="p-4 border-b border-slate-900 bg-slate-950 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
-          <label className="text-xs font-mono font-bold text-slate-500 uppercase">
-            Active Model:
-          </label>
-          <select
-            value={model}
-            onChange={(e) => {
-              setModel(e.target.value);
-              setIsEngineLoaded(false); // require reloading when model option changes
-            }}
-            disabled={isInitializing}
-            className="bg-slate-900 text-slate-355 border border-slate-850 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:border-indigo-500 max-w-xs truncate"
-          >
-            {AVAILABLE_MODELS.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name} ({m.size})
-              </option>
-            ))}
-          </select>
+          <span className="text-[10px] font-mono font-bold text-slate-500 uppercase">Provider:</span>
+          <span className="text-xs font-bold text-indigo-400 bg-indigo-500/10 px-2.5 py-1 rounded-full">
+            {providerLabel}
+          </span>
+          {isUsingProvider && (
+            <span className="text-[10px] text-emerald-400 font-mono flex items-center gap-1">
+              <span className="h-1.5 w-1.5 bg-emerald-500 rounded-full inline-block"></span>
+              Connected
+            </span>
+          )}
+          {isSearching && (
+            <span className="text-[10px] text-amber-400 font-mono flex items-center gap-1">
+              <div className="w-3 h-3 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
+              Searching web...
+            </span>
+          )}
         </div>
 
-        {!isEngineLoaded && (
-          <button
-            onClick={handleLoadModel}
-            disabled={isInitializing}
-            className="py-1.5 px-4 bg-indigo-500 hover:bg-indigo-650 text-white disabled:opacity-40 rounded-xl font-bold text-xs tracking-wider transition-colors shrink-0 flex items-center justify-center gap-1.5 cursor-pointer"
-          >
-            {isInitializing ? "Downloading..." : "Load Engine"}
-          </button>
+        {!isUsingProvider && !isEngineLoaded && (
+          <div className="flex items-center gap-2">
+            <div className="relative group">
+              <select
+                value={model}
+                onChange={(e) => { setModel(e.target.value); }}
+                disabled={isInitializing}
+                className="bg-slate-900 text-slate-300 border border-slate-800 rounded-xl pl-3 pr-8 py-1.5 text-xs focus:outline-none focus:border-indigo-500 appearance-none cursor-pointer min-w-[180px]"
+              >
+                <optgroup label="── Fast & Light ──">
+                  {getModelsByCategory("text-fast").map((m) => (
+                    <option key={m.id} value={m.id}>{m.name} ({m.size})</option>
+                  ))}
+                </optgroup>
+                <optgroup label="── Smart & Balanced ──">
+                  {getModelsByCategory("text-smart").map((m) => (
+                    <option key={m.id} value={m.id}>{m.name} ({m.size})</option>
+                  ))}
+                </optgroup>
+                <optgroup label="── Powerful Text ──">
+                  {getModelsByCategory("text-powerful").map((m) => (
+                    <option key={m.id} value={m.id}>{m.name} ({m.size})</option>
+                  ))}
+                </optgroup>
+                <optgroup label="── Vision (Reads Images) ──">
+                  {getModelsByCategory("vision").map((m) => (
+                    <option key={m.id} value={m.id}>{m.name} ({m.size})</option>
+                  ))}
+                </optgroup>
+                <optgroup label="── Fallback ──">
+                  {getModelsByCategory("fallback").map((m) => (
+                    <option key={m.id} value={m.id}>{m.name}</option>
+                  ))}
+                </optgroup>
+              </select>
+              <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2">
+                <svg className="w-3 h-3 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </div>
+              {/* Selected model info tooltip */}
+              <div className="absolute top-full mt-1 right-0 w-64 bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-xl hidden group-hover:block z-50">
+                {(() => {
+                  const m = AVAILABLE_MODELS.find(m => m.id === model);
+                  if (!m) return null;
+                  const categoryLabels: Record<ModelCategory, { label: string; color: string }> = {
+                    "text-fast": { label: "Fast & Light", color: "text-sky-400" },
+                    "text-smart": { label: "Smart & Balanced", color: "text-indigo-400" },
+                    "text-powerful": { label: "Powerful", color: "text-violet-400" },
+                    "vision": { label: "Vision", color: "text-emerald-400" },
+                    "fallback": { label: "Fallback", color: "text-slate-500" },
+                  };
+                  const cat = categoryLabels[m.category];
+                  return (
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[10px] font-bold ${cat.color}`}>{cat.label}</span>
+                        <span className="text-[10px] text-slate-600">{m.size}</span>
+                      </div>
+                      <p className="text-[11px] text-slate-300 font-semibold">{m.name}</p>
+                      <p className="text-[10px] text-slate-400">{m.description}</p>
+                      <p className="text-[9px] text-slate-500">VRAM: {m.vramRequired} &middot; {m.recommendedFor}</p>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+            <button
+              onClick={handleLoadModel}
+              disabled={isInitializing}
+              className="py-1.5 px-4 bg-indigo-500 hover:bg-indigo-600 text-white disabled:opacity-40 rounded-xl font-bold text-xs transition-colors cursor-pointer"
+            >
+              {isInitializing ? "Loading..." : "Load Engine"}
+            </button>
+          </div>
+        )}
+
+        {featureWarning && (
+          <div className="px-4 pb-3 shrink-0">
+            <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2 text-[10px] text-amber-300 leading-relaxed">
+              ⚠ {featureWarning}
+            </div>
+          </div>
         )}
       </div>
 
-      {/* Initialize Download progress indicator */}
       {isInitializing && (
         <div className="p-4 bg-slate-900/40 border-b border-slate-900 flex flex-col gap-2 shrink-0">
           <div className="flex justify-between items-center text-[10px] font-mono">
@@ -181,18 +336,11 @@ export default function ChatPanel() {
             <span className="text-indigo-400 font-bold">{downloadProgress}%</span>
           </div>
           <div className="w-full bg-slate-950 rounded-full h-1.5 overflow-hidden border border-slate-900">
-            <div
-              className="bg-indigo-500 h-1.5 rounded-full transition-all duration-300"
-              style={{ width: `${downloadProgress}%` }}
-            ></div>
+            <div className="bg-indigo-500 h-1.5 rounded-full transition-all duration-300" style={{ width: `${downloadProgress}%` }}></div>
           </div>
-          <p className="text-[9px] text-slate-500 leading-normal font-mono">
-            First load requires downloading weights (cached in browser storage). Downloading Llama/Qwen models uses significant bandwidth.
-          </p>
         </div>
       )}
 
-      {/* Messages Thread area */}
       <div className="flex-1 p-6 overflow-y-auto flex flex-col gap-4">
         {messages.map((msg) => {
           const isUser = msg.sender === "user";
@@ -201,22 +349,18 @@ export default function ChatPanel() {
               <span className="text-[9px] font-mono text-slate-600 mb-1">
                 {isUser ? "You" : "SherwinMail Assistant"} &bull; {msg.timestamp}
               </span>
-              <div
-                className={`px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-line ${
-                  isUser
-                    ? "bg-indigo-500/10 text-slate-100 border border-indigo-500/20 rounded-tr-sm"
-                    : "bg-slate-900/60 text-slate-200 border border-slate-850 rounded-tl-sm font-sans"
-                }`}
-              >
+              <div className={`px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-line ${
+                isUser
+                  ? "bg-indigo-500/10 text-slate-100 border border-indigo-500/20 rounded-tr-sm"
+                  : "bg-slate-900/60 text-slate-200 border border-slate-800 rounded-tl-sm"
+              }`}>
                 {msg.text || (isGenerating && msg.id === messages[messages.length - 1].id ? (
                   <div className="flex gap-1 py-1">
                     <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce"></span>
                     <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce [animation-delay:0.2s]"></span>
                     <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce [animation-delay:0.4s]"></span>
                   </div>
-                ) : (
-                  "..."
-                ))}
+                ) : "...")}
               </div>
             </div>
           );
@@ -224,15 +368,14 @@ export default function ChatPanel() {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Quick Suggestion Chips */}
       {messages.length === 1 && (
         <div className="px-6 py-2 flex flex-wrap gap-2 shrink-0">
           {suggestions.map((s, idx) => (
             <button
               key={idx}
               onClick={() => handleSendMessage(s)}
-              disabled={isGenerating || !isEngineLoaded}
-              className="px-3 py-1.5 border border-slate-850 hover:border-slate-750 text-slate-400 hover:text-slate-200 disabled:opacity-40 disabled:border-slate-900 disabled:text-slate-600 rounded-xl text-xs font-semibold transition-colors cursor-pointer"
+              disabled={isGenerating || !isEngineLoaded && !isUsingProvider}
+              className="px-3 py-1.5 border border-slate-800 hover:border-slate-700 text-slate-400 hover:text-slate-200 disabled:opacity-40 disabled:border-slate-900 disabled:text-slate-600 rounded-xl text-xs font-semibold transition-colors cursor-pointer"
             >
               {s}
             </button>
@@ -240,15 +383,14 @@ export default function ChatPanel() {
         </div>
       )}
 
-      {/* Input container */}
       <div className="p-4 border-t border-slate-900 bg-slate-950/80 shrink-0">
         <div className="relative flex items-center">
           <input
             type="text"
             placeholder={
-              isEngineLoaded
-                ? "Send a message to the AI assistant..."
-                : "Please load the AI engine first to chat..."
+              isEngineLoaded || isUsingProvider
+                ? "Ask about SherwinMail or any question..."
+                : "Load WebGPU engine or configure a provider in Settings..."
             }
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
@@ -258,26 +400,20 @@ export default function ChatPanel() {
                 handleSendMessage();
               }
             }}
-            disabled={isGenerating || !isEngineLoaded}
-            className="w-full pl-4 pr-12 py-3 bg-slate-900/60 border border-slate-850 focus:border-indigo-500 rounded-2xl text-sm text-slate-200 placeholder-slate-500 focus:outline-none transition-colors disabled:opacity-50"
+            disabled={isGenerating || (!isEngineLoaded && !isUsingProvider)}
+            className="w-full pl-4 pr-12 py-3 bg-slate-900/60 border border-slate-800 focus:border-indigo-500 rounded-2xl text-sm text-slate-200 placeholder-slate-500 focus:outline-none transition-colors disabled:opacity-50"
           />
           <button
             onClick={() => handleSendMessage()}
-            disabled={isGenerating || !isEngineLoaded || !inputValue.trim()}
-            className="absolute right-2.5 p-2 bg-indigo-500 hover:bg-indigo-650 disabled:bg-slate-900 text-white disabled:text-slate-600 rounded-xl transition-colors cursor-pointer"
+            disabled={isGenerating || (!isEngineLoaded && !isUsingProvider) || !inputValue.trim()}
+            className="absolute right-2.5 p-2 bg-indigo-500 hover:bg-indigo-600 disabled:bg-slate-800 text-white disabled:text-slate-600 rounded-xl transition-colors cursor-pointer"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2.5}
-                d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
-              />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
             </svg>
           </button>
         </div>
       </div>
-
     </div>
   );
 }

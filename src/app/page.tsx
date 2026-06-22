@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Email, MailFolder } from "@/types";
+import { Email, MailFolder, AIProviderConfig } from "@/types";
 import { detectWebGPUSupport, WebGPUDetectionResult } from "@/utils/webgpu";
 import MailSidebar from "@/components/MailSidebar";
 import MailList from "@/components/MailList";
@@ -9,6 +9,14 @@ import MailDetail from "@/components/MailDetail";
 import ChatPanel from "@/components/ChatPanel";
 import PrivacyBanner from "@/components/PrivacyBanner";
 import PrivacyDashboard from "@/components/PrivacyDashboard";
+import ThemeProvider from "@/components/ThemeProvider";
+import ProviderSettings from "@/components/ProviderSettings";
+import AppearanceSettings from "@/components/AppearanceSettings";
+import SystemTaskScheduler from "@/components/SystemTaskScheduler";
+import ProviderSetupModal from "@/components/ProviderSetupModal";
+import ErrorModal from "@/components/ErrorModal";
+import ResumeScanner from "@/components/ResumeScanner";
+import ThemeBackground from "@/components/ThemeBackground";
 
 // Mock Initial Data
 const DEFAULT_EMAILS: Email[] = [
@@ -68,6 +76,10 @@ export default function Home() {
   const [detection, setDetection] = useState<WebGPUDetectionResult | null>(null);
   const [diagLoading, setDiagLoading] = useState(true);
   const [hasLoaded, setHasLoaded] = useState(false);
+
+  // Provider setup modal state
+  const [showProviderSetup, setShowProviderSetup] = useState(false);
+  const [errorModal, setErrorModal] = useState<{ title: string; description: string; details?: string } | null>(null);
 
   // SMTP Account Integration States
   const [provider, setProvider] = useState<"protonmail" | "gmail" | "custom">("protonmail");
@@ -250,6 +262,24 @@ export default function Home() {
     if (view !== "inbox") setSelectedEmailId(null);
   };
 
+  // Show provider setup modal on first visit (if no provider configured)
+  useEffect(() => {
+    if (hasLoaded) {
+      const configured = localStorage.getItem("sherwin_ai_provider");
+      if (!configured) {
+        setShowProviderSetup(true);
+      }
+    }
+  }, [hasLoaded]);
+
+  const formatBytes = (bytes?: number) => {
+    if (bytes === undefined) return "N/A";
+    const gb = bytes / (1024 * 1024 * 1024);
+    if (gb >= 1) return `${gb.toFixed(2)} GB`;
+    const mb = bytes / (1024 * 1024);
+    return `${mb.toFixed(2)} MB`;
+  };
+
   const selectedEmail = emails.find((e) => e.id === selectedEmailId) || null;
 
   if (!hasLoaded) {
@@ -263,16 +293,32 @@ export default function Home() {
     );
   }
 
-  const formatBytes = (bytes?: number) => {
-    if (bytes === undefined) return "N/A";
-    const gb = bytes / (1024 * 1024 * 1024);
-    if (gb >= 1) return `${gb.toFixed(2)} GB`;
-    const mb = bytes / (1024 * 1024);
-    return `${mb.toFixed(2)} MB`;
-  };
-
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans overflow-hidden h-screen selection:bg-indigo-500 selection:text-white">
+    <ThemeProvider>
+      <ThemeBackground />
+      {/* Provider Setup Modal (first-run wizard) */}
+      <ProviderSetupModal
+        open={showProviderSetup}
+        onComplete={(cfg) => {
+          setShowProviderSetup(false);
+          localStorage.setItem("sherwin_ai_provider", JSON.stringify(cfg));
+        }}
+        onSkip={() => setShowProviderSetup(false)}
+      />
+
+      {/* Error Modal */}
+      <ErrorModal
+        open={errorModal !== null}
+        onClose={() => setErrorModal(null)}
+        title={errorModal?.title || ""}
+        description={errorModal?.description || ""}
+        details={errorModal?.details}
+        actions={[
+          { label: "Try Again", onClick: () => setErrorModal(null), variant: "primary" },
+        ]}
+      />
+
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans overflow-hidden h-screen selection:bg-indigo-500 selection:text-white">
       {/* Top Banner Header */}
       <header className="border-b border-slate-900 bg-slate-950/80 backdrop-blur-md px-6 py-3.5 flex items-center justify-between shrink-0 select-none">
         <button
@@ -315,304 +361,78 @@ export default function Home() {
         {/* Dynamic Center and Right workspace layouts */}
         {currentFolder === "home" ? (
           <PrivacyDashboard onNavigate={handleDashboardNavigate} />
+        ) : currentFolder === "resume" ? (
+          <ResumeScanner />
         ) : currentFolder === "chat" ? (
           <ChatPanel />
         ) : currentFolder === "settings" ? (
-          /* Settings and Accounts Configuration Page */
-          <div className="flex-1 bg-slate-950 p-6 sm:p-8 overflow-y-auto flex flex-col gap-8">
-            <div className="max-w-6xl w-full mx-auto grid grid-cols-1 lg:grid-cols-2 gap-8">
-              
-              {/* Left Column: SMTP Mail Connections Setup */}
+          <div className="flex-1 p-6 sm:p-8 overflow-y-auto flex flex-col gap-8">
+            <div className="max-w-6xl w-full mx-auto flex flex-col gap-8">
+              <ProviderSettings />
+              {/* SMTP Mail Connections */}
               <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col gap-6">
                 <div>
                   <h3 className="text-base font-bold text-white mb-1">Mail Provider Integration</h3>
-                  <p className="text-xs text-slate-500">
-                    Connect your email accounts securely. For complete privacy, connect ProtonMail via local ProtonMail Bridge.
-                  </p>
+                  <p className="text-xs text-slate-500">Connect your email accounts for sending.</p>
                 </div>
-
                 <div className="flex flex-col gap-4">
-                  {/* Select provider */}
                   <div>
-                    <label className="block text-[10px] font-mono text-slate-500 uppercase font-semibold mb-1">
-                      Account Type
-                    </label>
+                    <label className="block text-[10px] font-mono text-slate-500 uppercase font-semibold mb-1">Account Type</label>
                     <div className="grid grid-cols-3 gap-2">
-                      <button
-                        onClick={() => setProvider("protonmail")}
-                        className={`py-2 px-3 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
-                          provider === "protonmail"
-                            ? "bg-indigo-500/10 border-indigo-500 text-indigo-400 font-bold"
-                            : "bg-slate-950/60 border-slate-900 text-slate-400 hover:text-slate-200"
-                        }`}
-                      >
-                        ProtonMail Bridge
-                      </button>
-                      <button
-                        onClick={() => setProvider("gmail")}
-                        className={`py-2 px-3 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
-                          provider === "gmail"
-                            ? "bg-indigo-500/10 border-indigo-500 text-indigo-400 font-bold"
-                            : "bg-slate-950/60 border-slate-900 text-slate-400 hover:text-slate-200"
-                        }`}
-                      >
-                        Gmail
-                      </button>
-                      <button
-                        onClick={() => setProvider("custom")}
-                        className={`py-2 px-3 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
-                          provider === "custom"
-                            ? "bg-indigo-500/10 border-indigo-500 text-indigo-400 font-bold"
-                            : "bg-slate-950/60 border-slate-900 text-slate-400 hover:text-slate-200"
-                        }`}
-                      >
-                        Custom SMTP
-                      </button>
+                      {(["protonmail", "gmail", "custom"] as const).map((p) => (
+                        <button key={p} onClick={() => setProvider(p)} className={`py-2 px-3 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${provider === p ? "bg-indigo-500/10 border-indigo-500 text-indigo-400 font-bold" : "bg-slate-950/60 border-slate-900 text-slate-400 hover:text-slate-200"}`}>
+                          {p === "protonmail" ? "ProtonMail Bridge" : p === "gmail" ? "Gmail" : "Custom SMTP"}
+                        </button>
+                      ))}
                     </div>
                   </div>
-
-                  {/* Email address field */}
                   <div>
-                    <label className="block text-[10px] font-mono text-slate-500 uppercase font-semibold mb-1">
-                      Email Address
-                    </label>
-                    <input
-                      type="email"
-                      placeholder="user@protonmail.com"
-                      value={emailAddress}
-                      onChange={(e) => setEmailAddress(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-900 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-250 focus:outline-none transition-colors"
-                    />
+                    <label className="block text-[10px] font-mono text-slate-500 uppercase font-semibold mb-1">Email Address</label>
+                    <input type="email" placeholder="user@protonmail.com" value={emailAddress} onChange={(e) => setEmailAddress(e.target.value)} className="w-full bg-slate-950 border border-slate-900 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none transition-colors" />
                   </div>
-
-                  {/* Server settings */}
                   <div className="grid grid-cols-3 gap-3">
                     <div className="col-span-2">
-                      <label className="block text-[10px] font-mono text-slate-500 uppercase font-semibold mb-1">
-                        SMTP Server
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="127.0.0.1"
-                        value={smtpServer}
-                        onChange={(e) => setSmtpServer(e.target.value)}
-                        disabled={provider !== "custom"}
-                        className="w-full bg-slate-950 border border-slate-900 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-250 focus:outline-none transition-colors disabled:opacity-50"
-                      />
+                      <label className="block text-[10px] font-mono text-slate-500 uppercase font-semibold mb-1">SMTP Server</label>
+                      <input type="text" placeholder="127.0.0.1" value={smtpServer} onChange={(e) => setSmtpServer(e.target.value)} disabled={provider !== "custom"} className="w-full bg-slate-950 border border-slate-900 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none transition-colors disabled:opacity-50" />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-mono text-slate-500 uppercase font-semibold mb-1">
-                        SMTP Port
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="1025"
-                        value={smtpPort}
-                        onChange={(e) => setSmtpPort(e.target.value)}
-                        disabled={provider !== "custom"}
-                        className="w-full bg-slate-950 border border-slate-900 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-250 focus:outline-none transition-colors disabled:opacity-50"
-                      />
+                      <label className="block text-[10px] font-mono text-slate-500 uppercase font-semibold mb-1">SMTP Port</label>
+                      <input type="text" placeholder="1025" value={smtpPort} onChange={(e) => setSmtpPort(e.target.value)} disabled={provider !== "custom"} className="w-full bg-slate-950 border border-slate-900 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none transition-colors disabled:opacity-50" />
                     </div>
                   </div>
-
-                  {/* Username and password */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-[10px] font-mono text-slate-500 uppercase font-semibold mb-1">
-                        Username (Optional)
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="Default is email address"
-                        value={smtpUser}
-                        onChange={(e) => setSmtpUser(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-900 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-250 focus:outline-none transition-colors"
-                      />
+                      <label className="block text-[10px] font-mono text-slate-500 uppercase font-semibold mb-1">Username</label>
+                      <input type="text" placeholder="Default is email" value={smtpUser} onChange={(e) => setSmtpUser(e.target.value)} className="w-full bg-slate-950 border border-slate-900 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none transition-colors" />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-mono text-slate-500 uppercase font-semibold mb-1">
-                        Password / App Password
-                      </label>
-                      <input
-                        type="password"
-                        placeholder="••••••••••••••••"
-                        value={smtpPassword}
-                        onChange={(e) => setSmtpPassword(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-900 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-250 focus:outline-none transition-colors"
-                      />
+                      <label className="block text-[10px] font-mono text-slate-500 uppercase font-semibold mb-1">Password</label>
+                      <input type="password" placeholder="••••••••••••" value={smtpPassword} onChange={(e) => setSmtpPassword(e.target.value)} className="w-full bg-slate-950 border border-slate-900 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none transition-colors" />
                     </div>
                   </div>
-
-                  {/* Actions */}
                   <div className="pt-2">
-                    <button
-                      onClick={handleSaveConnection}
-                      disabled={isTestingConnection}
-                      className="w-full py-2.5 bg-gradient-to-tr from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700 text-white rounded-xl font-bold text-xs tracking-wider disabled:opacity-50 transition-all flex items-center justify-center gap-2 cursor-pointer"
-                    >
+                    <button onClick={handleSaveConnection} disabled={isTestingConnection} className="w-full py-2.5 bg-gradient-to-tr from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700 text-white rounded-xl font-bold text-xs tracking-wider disabled:opacity-50 transition-all flex items-center justify-center gap-2 cursor-pointer">
                       {isTestingConnection ? (
-                        <>
-                          <div className="w-3.5 h-3.5 border-2 border-indigo-200 border-t-transparent rounded-full animate-spin"></div>
-                          Testing Mail Server connection...
-                        </>
-                      ) : (
-                        "Save & Test Connection"
-                      )}
+                        <><div className="w-3.5 h-3.5 border-2 border-indigo-200 border-t-transparent rounded-full animate-spin"></div> Testing Mail Server...</>
+                      ) : "Save & Test Connection"}
                     </button>
                   </div>
-
-                  {/* Connection Results feedback */}
                   {testResult !== "none" && (
-                    <div className={`p-3 rounded-xl border text-xs leading-relaxed ${
-                      testResult === "success" 
-                        ? "bg-emerald-950/20 border-emerald-900/50 text-emerald-400" 
-                        : "bg-rose-950/20 border-rose-900/50 text-rose-400"
-                    }`}>
+                    <div className={`p-3 rounded-xl border text-xs leading-relaxed ${testResult === "success" ? "bg-emerald-950/20 border-emerald-900/50 text-emerald-400" : "bg-rose-950/20 border-rose-900/50 text-rose-400"}`}>
                       <div className="flex items-center gap-2">
                         {testResult === "success" ? (
-                          <svg className="w-4 h-4 text-emerald-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                          </svg>
+                          <svg className="w-4 h-4 text-emerald-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                         ) : (
-                          <svg className="w-4 h-4 text-rose-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                          </svg>
+                          <svg className="w-4 h-4 text-rose-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                         )}
                         <span className="font-semibold">{testMessage}</span>
                       </div>
                     </div>
                   )}
-
-                  {/* Informational notices */}
-                  <div className="mt-2 bg-slate-950/40 p-4 rounded-xl border border-slate-900 text-[11px] leading-relaxed text-slate-400 space-y-2">
-                    {provider === "protonmail" && (
-                      <>
-                        <p className="font-bold text-slate-300">ProtonMail Bridge Setup:</p>
-                        <p>1. Open the ProtonMail Bridge desktop application on your computer.</p>
-                        <p>2. Locate the SMTP server configurations under your Bridge settings.</p>
-                        <p>3. Verify that your Bridge uses Port <code className="text-indigo-400 bg-indigo-950/30 px-1 py-0.5 rounded font-mono">1025</code> (SMTP) and copy your custom Bridge password.</p>
-                      </>
-                    )}
-                    {provider === "gmail" && (
-                      <>
-                        <p className="font-bold text-slate-300">Gmail Setup instructions:</p>
-                        <p>1. Open Gmail and go to <strong>Settings &gt; Forwarding and POP/IMAP</strong>; ensure <strong>IMAP Access</strong> is enabled.</p>
-                        <p>2. Navigate to your Google Account Settings &gt; Security and turn on <strong>2-Step Verification</strong>.</p>
-                        <p>3. Generate an <strong>App Password</strong> for your account. Use this App Password instead of your regular password.</p>
-                      </>
-                    )}
-                    {provider === "custom" && (
-                      <>
-                        <p className="font-bold text-slate-300">Custom SMTP instructions:</p>
-                        <p>Enter the SMTP server address and TLS/SSL port provided by your organization or mail hosting provider.</p>
-                      </>
-                    )}
-                  </div>
-
                 </div>
               </div>
-
-              {/* Right Column: Hardware Diagnostics */}
-              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col gap-6 h-fit">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-base font-bold text-white">Hardware Diagnostics</h3>
-                  <button
-                    onClick={runDiagnostics}
-                    disabled={diagLoading}
-                    className="text-xs font-semibold text-indigo-400 hover:text-indigo-300 disabled:opacity-50 transition-colors flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <svg
-                      className={`w-3.5 h-3.5 ${diagLoading ? "animate-spin" : ""}`}
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.27 15"
-                      />
-                    </svg>
-                    Rescan
-                  </button>
-                </div>
-
-                {diagLoading ? (
-                  <div className="py-8 flex flex-col items-center justify-center text-center gap-3">
-                    <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-                    <p className="text-xs text-slate-400 font-mono">Querying GPU parameters...</p>
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-5">
-                    <div className="flex items-center gap-3 p-3 rounded-xl bg-slate-950/85 border border-slate-900">
-                      {detection?.deviceCreated ? (
-                        <>
-                          <div className="h-3 w-3 rounded-full bg-emerald-500 shadow-md shadow-emerald-500/50 relative">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                          </div>
-                          <div>
-                            <p className="text-xs font-semibold text-white">WebGPU Active</p>
-                            <p className="text-[10px] text-slate-500 font-mono">Ready for local LLM execution</p>
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <div className="h-3 w-3 rounded-full bg-rose-500 shadow-md shadow-rose-500/50"></div>
-                          <div className="flex-1">
-                            <p className="text-xs font-semibold text-white">WebGPU Inactive</p>
-                            <p className="text-[10px] text-rose-400 font-mono">
-                              {detection?.error || "Device creation failed"}
-                            </p>
-                          </div>
-                        </>
-                      )}
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2 text-center text-xs">
-                      <div className={`p-2.5 rounded-lg border font-semibold ${
-                        detection?.supported ? "bg-emerald-950/20 border-emerald-900/50 text-emerald-400" : "bg-rose-950/20 border-rose-900/50 text-rose-400"
-                      }`}>
-                        Browser API: {detection?.supported ? "Supported" : "Missing"}
-                      </div>
-                      <div className={`p-2.5 rounded-lg border font-semibold ${
-                        detection?.adapterCreated ? "bg-emerald-950/20 border-emerald-900/50 text-emerald-400" : "bg-rose-950/20 border-rose-900/50 text-rose-400"
-                      }`}>
-                        GPU Adapter: {detection?.adapterCreated ? "Detected" : "Unavailable"}
-                      </div>
-                    </div>
-
-                    {detection?.deviceCreated && detection.gpuInfo && (
-                      <div className="flex flex-col gap-3 font-mono text-[11px] bg-slate-950/45 p-4 rounded-xl border border-slate-900">
-                        <div className="flex justify-between py-1 border-b border-slate-900/60">
-                          <span className="text-slate-500">Device</span>
-                          <span className="text-slate-350 truncate max-w-[180px] font-semibold">{detection.gpuInfo.device}</span>
-                        </div>
-                        <div className="flex justify-between py-1 border-b border-slate-900/60">
-                          <span className="text-slate-500">Vendor</span>
-                          <span className="text-slate-355">{detection.gpuInfo.vendor}</span>
-                        </div>
-                        <div className="flex justify-between pt-1">
-                          <span className="text-slate-500">Max Buffer</span>
-                          <span className="text-slate-355">{formatBytes(detection.limits?.maxBufferSize)}</span>
-                        </div>
-                      </div>
-                    )}
-
-                    {(!detection?.deviceCreated || detection?.error) && (
-                      <div className="bg-rose-950/10 border border-rose-900/40 text-rose-250 p-4 rounded-xl text-xs space-y-2">
-                        <p className="font-semibold text-rose-350">Troubleshooting Steps:</p>
-                        <ul className="list-disc pl-4 space-y-1 text-slate-400 leading-relaxed">
-                          <li>Disable strict fingerprinting blocks in Brave Shields next to the address bar.</li>
-                          <li>Verify &quot;graphics acceleration when available&quot; is toggled ON under settings.</li>
-                          <li>Search Vulkan in `brave://flags` and set to Enabled.</li>
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
+              <AppearanceSettings />
+              <SystemTaskScheduler />
             </div>
           </div>
         ) : (
@@ -635,9 +455,10 @@ export default function Home() {
       </div>
 
       {/* Footer bar */}
-      <footer className="border-t border-slate-900 bg-slate-950 py-3.5 px-6 text-center text-[10px] text-slate-650 font-mono shrink-0 select-none">
+      <footer className="border-t border-slate-900 bg-slate-950 py-3.5 px-6 text-center text-[10px] text-slate-500 font-mono shrink-0 select-none">
         &copy; {new Date().getFullYear()} SherwinMail. Local, Secure, Offline-First AI.
       </footer>
     </div>
+    </ThemeProvider>
   );
 }

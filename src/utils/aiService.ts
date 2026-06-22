@@ -1,38 +1,102 @@
 import { ChatMessage } from "@/types";
 
+export type ModelCategory = "text-fast" | "text-smart" | "text-powerful" | "vision" | "fallback";
+
 export interface ModelOption {
   id: string;
   name: string;
   size: string;
   vramRequired: string;
+  category: ModelCategory;
+  description: string;
+  recommendedFor: string;
 }
 
 export const AVAILABLE_MODELS: ModelOption[] = [
   {
     id: "Qwen2.5-0.5B-Instruct-q4f16_1-MLC",
-    name: "Qwen 2.5 (0.5B Instruct - Fast)",
+    name: "Qwen 2.5 (0.5B)",
     size: "0.35 GB",
     vramRequired: "1.2 GB",
+    category: "text-fast",
+    description: "Fastest option, best for simple chat & drafting",
+    recommendedFor: "Low VRAM (< 2 GB) or quick responses",
   },
   {
     id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC",
-    name: "Qwen 2.5 (1.5B Instruct - Balanced)",
+    name: "Qwen 2.5 (1.5B)",
     size: "0.98 GB",
     vramRequired: "2.2 GB",
+    category: "text-smart",
+    description: "Good balance of speed and quality for drafting",
+    recommendedFor: "General use — email drafting, JD analysis",
   },
   {
-    id: "Llama-3-8B-Instruct-q4f16_1-MLC",
-    name: "Llama 3 (8B Instruct - Heavy)",
+    id: "Phi-3.5-vision-instruct-q4f16_1-MLC",
+    name: "Phi-3.5 Vision (4.2B)",
+    size: "3.9 GB",
+    vramRequired: "4 GB",
+    category: "vision",
+    description: "Can read images — resumes, screenshots, JDs",
+    recommendedFor: "Resume scanning, image-based content",
+  },
+  {
+    id: "Phi-3.5-mini-instruct-q4f16_1-MLC",
+    name: "Phi-3.5 Mini (3.8B)",
+    size: "2.2 GB",
+    vramRequired: "3.5 GB",
+    category: "text-smart",
+    description: "Proven small model, great for drafting & analysis",
+    recommendedFor: "High-quality drafting & JD analysis",
+  },
+  {
+    id: "Llama-3.2-3B-Instruct-q4f16_1-MLC",
+    name: "Llama 3.2 (3B)",
+    size: "1.8 GB",
+    vramRequired: "3 GB",
+    category: "text-smart",
+    description: "Modern architecture, strong for its size",
+    recommendedFor: "Balanced smart drafting",
+  },
+  {
+    id: "Qwen3-4B-q4f16_1-MLC",
+    name: "Qwen 3 (4B)",
+    size: "2.5 GB",
+    vramRequired: "3.5 GB",
+    category: "text-powerful",
+    description: "Good reasoning with larger context window",
+    recommendedFor: "Complex multi-step drafting",
+  },
+  {
+    id: "Llama-3-8B-Instruct-q4f16_1-MLC-1k",
+    name: "Llama 3 (8B)",
     size: "4.7 GB",
     vramRequired: "6.5 GB",
+    category: "text-powerful",
+    description: "Best text-only quality, highest VRAM needed",
+    recommendedFor: "Maximum quality, complex multi-step tasks",
   },
   {
     id: "mock-assistant",
-    name: "Offline Rule-based Assistant (No GPU/Download required)",
+    name: "Offline Rule-based Assistant",
     size: "0 MB",
     vramRequired: "0 GB",
+    category: "fallback",
+    description: "No GPU needed — basic template generation",
+    recommendedFor: "When no WebGPU is available",
   },
 ];
+
+export function getModelsByCategory(category: ModelCategory): ModelOption[] {
+  return AVAILABLE_MODELS.filter((m) => m.category === category);
+}
+
+export function getRecommendedModel(vramGB: number): ModelOption {
+  if (vramGB >= 5) return AVAILABLE_MODELS.find((m) => m.id === "Phi-3.5-vision-instruct-q4f16_1-MLC")!;
+  if (vramGB >= 4) return AVAILABLE_MODELS.find((m) => m.id === "Phi-3.5-vision-instruct-q4f16_1-MLC")!;
+  if (vramGB >= 3) return AVAILABLE_MODELS.find((m) => m.id === "Qwen2.5-1.5B-Instruct-q4f16_1-MLC")!;
+  return AVAILABLE_MODELS.find((m) => m.id === "Qwen2.5-0.5B-Instruct-q4f16_1-MLC")!;
+}
 
 export class AIService {
   private engine: any | null = null;
@@ -74,7 +138,18 @@ export class AIService {
       this.currentModelId = modelId;
       return true;
     } catch (e: any) {
-      console.error("WebLLM Engine failed to load, falling back to mock assistant:", e);
+      console.error("WebLLM Engine failed to load:", e);
+      const msg = e?.message || String(e);
+      if (msg.includes("index_kernel") || msg.includes("ShaderModule") || msg.includes("shader")) {
+        this.currentModelId = "mock-assistant";
+        this.engine = null;
+        throw new Error(
+          "Your GPU driver doesn't support a required feature (shader-f16). " +
+          "Try: (1) Update your GPU drivers, (2) In Brave, enable brave://flags/#enable-unsafe-webgpu " +
+          "(keep Vulkan flag disabled — it causes black screens on Linux), " +
+          "(3) If using Linux, try Chrome or Edge which have better WebGPU support."
+        );
+      }
       this.currentModelId = "mock-assistant";
       this.engine = null;
       throw new Error(e?.message || String(e));
@@ -92,34 +167,51 @@ export class AIService {
     return this.currentModelId || "None Selected";
   }
 
-  // Chat completion supporting streaming chunks
+  isVisionModel(): boolean {
+    return this.currentModelId.includes("vision") || this.currentModelId.includes("vl");
+  }
+
+  // Chat completion supporting streaming chunks and vision
   async getChatCompletion(
     messages: ChatMessage[],
-    onChunk: (chunk: string) => void
+    onChunk: (chunk: string) => void,
+    imageBase64?: string,
+    systemPrompt?: string,
   ): Promise<string> {
-    // Determine user message context
     const lastUserMessage = messages[messages.length - 1]?.text || "";
 
     if (this.currentModelId === "mock-assistant" || !this.engine) {
-      // Execute local smart mock generator
       return this.runMockCompletion(lastUserMessage, onChunk);
     }
 
     try {
-      const mlcMessages = messages.map((m) => ({
-        role: m.sender === "user" ? ("user" as const) : ("assistant" as const),
-        content: m.text,
-      }));
+      const mlcMessages: any[] = [
+        {
+          role: "system",
+          content: systemPrompt || "You are a professional outreach assistant. If any context (Names, Companies, Dates, Jobs) is missing, strictly use [BRACKETS] e.g., [Hiring Manager Name] or [Company Name]. Do not hallucinate or make up details.",
+        },
+      ];
+
+      const lastId = messages.length > 0 ? messages[messages.length - 1].id : "";
+      for (const m of messages) {
+        if (m.sender === "user" && imageBase64 && m.id === lastId) {
+          mlcMessages.push({
+            role: "user",
+            content: [
+              { type: "text", text: m.text },
+              { type: "image_url", image_url: { url: imageBase64 } },
+            ],
+          });
+        } else {
+          mlcMessages.push({
+            role: m.sender === "user" ? "user" : "assistant",
+            content: m.text,
+          });
+        }
+      }
 
       const response = this.engine.chatCompletion({
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are a professional outreach assistant. If any context (Names, Companies, Dates, Jobs) is missing, strictly use [BRACKETS] e.g., [Hiring Manager Name] or [Company Name]. Do not hallucinate or make up details.",
-          },
-          ...mlcMessages,
-        ],
+        messages: mlcMessages,
         stream: true,
       });
 

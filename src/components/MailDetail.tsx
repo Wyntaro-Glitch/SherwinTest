@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Email } from "@/types";
 import { aiService } from "@/utils/aiService";
+import { getProviderConfig, chatCompletion } from "@/utils/aiProvider";
 
 interface MailDetailProps {
   email: Email | null;
@@ -62,19 +63,42 @@ export default function MailDetail({
   };
 
   // Run AI generation from Job description
-  const handleAIGenerate = () => {
+  const handleAIGenerate = async () => {
     if (!jobText.trim()) return;
     setIsGenerating(true);
 
-    setTimeout(() => {
-      const generatedBody = aiService.generateDraftFromJob(jobText, subject);
-      setBody(generatedBody);
-      onUpdateEmail({
-        ...email,
-        body: generatedBody,
-      });
-      setIsGenerating(false);
-    }, 800);
+    const config = getProviderConfig();
+    if (config.provider === "ollama" || config.provider === "lmstudio" || config.provider === "api") {
+      try {
+        let draft = "";
+        await chatCompletion({
+          messages: [
+            { role: "system", content: "You are a professional outreach assistant. Generate a concise cold email draft based on the job description and subject line. Use [BRACKETS] for missing personal details. Never hallucinate names or companies." },
+            { role: "user", content: `Job Description: ${jobText}\n\nSubject: ${subject}\n\nGenerate the full email body.` },
+          ],
+          onChunk: (chunk) => { draft = chunk; },
+        });
+        setBody(draft);
+        onUpdateEmail({ ...email, body: draft });
+      } catch (e: any) {
+        console.error("AI provider draft failed:", e);
+        const fallback = aiService.generateDraftFromJob(jobText, subject);
+        setBody(fallback);
+        onUpdateEmail({ ...email, body: fallback });
+      } finally {
+        setIsGenerating(false);
+      }
+    } else {
+      setTimeout(() => {
+        const generatedBody = aiService.generateDraftFromJob(jobText, subject);
+        setBody(generatedBody);
+        onUpdateEmail({
+          ...email,
+          body: generatedBody,
+        });
+        setIsGenerating(false);
+      }, 800);
+    }
   };
 
   // Mock send email

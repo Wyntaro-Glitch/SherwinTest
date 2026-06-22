@@ -16,7 +16,11 @@ export interface ChatMessage {
   timestamp: string;
 }
 
-export type MailFolder = "home" | "inbox" | "draft" | "sent" | "chat" | "settings" | "profile";
+export type MailFolder = "home" | "inbox" | "draft" | "sent" | "chat" | "settings" | "profile" | "resume";
+
+export type MessageContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
 
 export interface UserProfile {
   name: string;
@@ -25,4 +29,26 @@ export interface UserProfile {
   resumeText: string;
   experience: string;
   skills: string[];
+}
+
+export type AIProviderType = "auto" | "webgpu" | "ollama" | "lmstudio" | "api";
+
+export interface AIProviderConfig {
+  provider: AIProviderType;
+  model: string;
+  apiKey?: string;
+  baseUrl?: string;
+  ollamaModel?: string;
+  lmStudioModel?: string;
+}
+
+export type ThemeName = "dark" | "light" | "cyberpunk" | "sakura" | "forest" | "ocean";
+
+export interface SystemTaskStatus {
+  id: string;
+  label: string;
+  description: string;
+  lastRun: string | null;
+  status: "idle" | "running" | "success" | "error";
+  errorMessage?: string;
 }
