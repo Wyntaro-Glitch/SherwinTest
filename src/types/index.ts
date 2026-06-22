@@ -16,4 +16,13 @@ export interface ChatMessage {
   timestamp: string;
 }
 
-export type MailFolder = "inbox" | "draft" | "sent" | "chat" | "settings";
+export type MailFolder = "home" | "inbox" | "draft" | "sent" | "chat" | "settings" | "profile";
+
+export interface UserProfile {
+  name: string;
+  email: string;
+  phone: string;
+  resumeText: string;
+  experience: string;
+  skills: string[];
+}

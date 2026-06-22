@@ -7,6 +7,8 @@ import MailSidebar from "@/components/MailSidebar";
 import MailList from "@/components/MailList";
 import MailDetail from "@/components/MailDetail";
 import ChatPanel from "@/components/ChatPanel";
+import PrivacyBanner from "@/components/PrivacyBanner";
+import PrivacyDashboard from "@/components/PrivacyDashboard";
 
 // Mock Initial Data
 const DEFAULT_EMAILS: Email[] = [
@@ -59,7 +61,7 @@ Stripe HR Operations`,
 
 export default function Home() {
   const [emails, setEmails] = useState<Email[]>([]);
-  const [currentFolder, setCurrentFolder] = useState<MailFolder>("inbox");
+  const [currentFolder, setCurrentFolder] = useState<MailFolder>("home");
   const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
   
   // Hardware state for Diagnostics view
@@ -243,6 +245,11 @@ export default function Home() {
     setSelectedEmailId(newDraft.id);
   };
 
+  const handleDashboardNavigate = (view: "inbox" | "chat" | "settings") => {
+    setCurrentFolder(view);
+    if (view !== "inbox") setSelectedEmailId(null);
+  };
+
   const selectedEmail = emails.find((e) => e.id === selectedEmailId) || null;
 
   if (!hasLoaded) {
@@ -268,7 +275,10 @@ export default function Home() {
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans overflow-hidden h-screen selection:bg-indigo-500 selection:text-white">
       {/* Top Banner Header */}
       <header className="border-b border-slate-900 bg-slate-950/80 backdrop-blur-md px-6 py-3.5 flex items-center justify-between shrink-0 select-none">
-        <div className="flex items-center gap-3">
+        <button
+          onClick={() => { setCurrentFolder("home"); setSelectedEmailId(null); }}
+          className="flex items-center gap-3 cursor-pointer"
+        >
           <div className="h-8 w-8 rounded-xl bg-gradient-to-tr from-indigo-500 to-violet-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
             <span className="font-extrabold text-white text-base tracking-wider">S</span>
           </div>
@@ -280,11 +290,14 @@ export default function Home() {
               Privacy AI Email Orchestrator
             </p>
           </div>
-        </div>
+        </button>
         <span className="text-[10px] font-mono text-slate-500 border border-slate-900 rounded-full px-3 py-0.5 bg-slate-900/50">
           Local Workspace Active
         </span>
       </header>
+
+      {/* Zero-Data-Transfer Privacy Banner */}
+      <PrivacyBanner />
 
       {/* Workspace Inner App Frame */}
       <div className="flex-1 flex overflow-hidden">
@@ -300,7 +313,9 @@ export default function Home() {
         />
 
         {/* Dynamic Center and Right workspace layouts */}
-        {currentFolder === "chat" ? (
+        {currentFolder === "home" ? (
+          <PrivacyDashboard onNavigate={handleDashboardNavigate} />
+        ) : currentFolder === "chat" ? (
           <ChatPanel />
         ) : currentFolder === "settings" ? (
           /* Settings and Accounts Configuration Page */
