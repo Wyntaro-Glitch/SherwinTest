@@ -1,6 +1,8 @@
 import { PDFParse } from "pdf-parse";
 import type { NextRequest } from "next/server";
 
+PDFParse.setWorker("pdfjs-dist/legacy/build/pdf.worker.mjs");
+
 // ── Constants ────────────────────────────────────────────────────────────────
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB hard cap
 

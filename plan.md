@@ -1,102 +1,94 @@
-# SherwinMail Development Plan
+# SherwinMail — Build Pipeline
 
-## 🎯 Mission Statement: Your Data, Your PC
-SherwinMail is a Privacy-Engineered Career Assistant. We provide the power of AI job application orchestration without sacrificing user privacy. Our core philosophy is autonomy: the AI runs locally, data stays on the user's PC, and the system acts as a trusted anchor for professional correspondence.
+## Stage 1: Data Foundation
 
-## 🚀 Detailed Roadmap
+- [ ] Set up global state management — Extract app state from `page.tsx` into a React Context or Zustand store
+- [ ] Initialize IndexedDB schema — Create DB for emails, drafts, user profile, and template library
+- [ ] Add `useEncryptedStorage` hook — Wrap localStorage/IndexedDB with Web Crypto API for SMTP credentials
+- [ ] Create reusable modal/toast system — Needed by upload, settings, and confirmation dialogs
 
-### Phase 1: Project Setup & Privacy Diagnostics
-- Establish Next.js App Router structure.
-- Implement WebGPU capability detection.
-- Develop a "Privacy & Hardware Dashboard" that greets the user by verifying their GPU support before AI initialization.
-- Create a clear "Zero-Data-Transfer" policy banner within the UI to reassure users from the start.
+## Stage 2: User Profile & Resume
 
-### Phase 2: Knowledge Extraction & User Context
-- Create a Next.js API Route (`/api/extract`) for local PDF parsing using `pdf-parse`.
-- Develop a "User Profile" module (local JSON storage) where users save their resume and experience.
-- Implement context-aware extraction that takes the uploaded Job Description and matches it against the user's locally saved profile.
-- Add client-side PDF preview to allow users to verify file content before extraction.
+- [ ] Build User Profile module (local JSON + IndexedDB) — name, email, phone, skills, experience
+- [ ] Create Resume upload UI — Drag-and-drop PDF uploader with loading state
+- [ ] Wire PDF upload to `/api/extract` — Extract text, show word/page count, store in profile
+- [ ] Implement client-side PDF preview — Render PDF pages before user confirms extraction
+- [ ] Add manual text editor for resume — Allow users to paste or edit extracted text directly
 
-### Phase 3: AI Orchestration & Safety
-- Offload `AIService` logic to a Web Worker for 60 FPS UI responsiveness.
-- Map hardware adapter limits to specific model tiers (Auto-select: Tiny/Small/Medium).
-- Implement strict "bracket identifier" logic to ensure placeholders (like `[Company Name]`) are mandatory when details are missing.
-- Add a "Hallucination Scanner" UI component that automatically highlights any `[...]` brackets in the generated draft.
-- Provide a "Model Download Manager" to show progress and cached status.
+## Stage 3: Job Description Intake
 
-### Phase 4: SMTP & Email Orchestration
-- Secure SMTP settings in local storage with encryption.
-- Create a side-by-side view (Job Description context vs. Generated Email) for easy verification.
-- Implement a "Local Template Library" so users can save and reuse their own "winning" email structures.
-- Integrate `nodemailer` for backend dispatching.
-- Add an "Email Variations" feature to toggle the tone (Formal, Direct, Creative) before finalizing.
+- [ ] Add JD upload/paste interface — Sidebar panel in the Composer for pasting or uploading JD PDFs
+- [ ] Validate PDF extraction across various layouts — Test with real job descriptions, handle edge cases
+- [ ] Implement text cleaning utility — Strip headers/footers, normalize whitespace, extract structured fields
+- [ ] Implement context-aware extraction — Match JD requirements against stored User Profile
 
-### Phase 5: Scalability & Advanced Features
-- Integrate IndexedDB for offline persistence of application history.
-- Implement model weight caching to avoid re-downloads across browser sessions.
-- Perform a thorough audit of Web Worker communication to eliminate data-transfer bottlenecks.
-- Create a "Fine-Tuning Hook" UI to allow users to upload past successful emails to create a personalized, local context (RAG - Retrieval-Augmented Generation) for the AI.
+## Stage 4: AI Integration & Safety
 
-## 🚀 Advanced Website Optimization Strategy
-- **PWA Conversion**: Implement `next-pwa` to enable true offline functionality and Service Worker caching.
-- **Bundle Optimization**: Integrate `@next/bundle-analyzer` to minimize the footprint of AI library imports.
-- **Lazy Loading**: Use `React.Suspense` and dynamic imports to defer AI service loading until the user explicitly clicks "Compose."
-- **Asset Preloading**: Preload critical UI components to reduce LCP (Largest Contentful Paint).
-- **Token Streaming**: Refine token streaming from Web Worker to UI to ensure smooth, non-blocking text generation.
+- [ ] Migrate AIService logic into a Web Worker — Move heavy inference off main thread
+- [ ] Refine token streaming from Worker to UI — Smooth, non-blocking text rendering
+- [ ] Implement system prompting with bracket identifier logic — Mandate `[Placeholder]` for missing info
+- [ ] Implement manual GPU selection — Show detected adapters, let user choose (integrated vs dedicated)
+- [ ] Add UI feedback for model initialization — Progress bar, status text, ETA, error states
+- [ ] Build Model Download Manager — UI showing cached models, disk usage, download/cancel/delete
+- [ ] Build Hallucination Scanner — Highlight `[...]` brackets in generated drafts, warn before send
+- [ ] Implement graceful fallback UI — Banner when WebGPU unavailable, suggest mock mode
 
-## 🛠️ Technical Considerations
-- **Privacy**: All AI processing MUST remain client-side.
-- **Hardware Fallbacks**: Provide a clear UI to select alternative hardware or lighter models if GPU detection fails.
-- **Performance**: Maintain 60 FPS by ensuring all heavy computation is off-main-thread.
-- **Error Handling**: Graceful fallback to rule-based generation when WebGPU is unavailable.
+## Stage 5: Email Drafting & SMTP
 
+- [ ] Build secure SMTP configuration interface — Provider presets, encrypted storage, test connection
+- [ ] Enhance draft editing interface — Auto-save indicators, field validation
+- [ ] Integrate SMTP send functionality via `nodemailer` — Create `/api/send` route
+- [ ] Build Local Template Library — Save/load/delete email templates from IndexedDB
+- [ ] Add Email Variations feature — Toggle tone (Formal / Direct / Creative) before finalizing
+- [ ] Create side-by-side preview — JD context next to generated email for verification
 
+## Stage 6: Inbox & Email Management
 
-# SherwinMail Project Instructions & Standards
+- [ ] Implement email threading — Group replies by subject, conversation view
+- [ ] Add inbox search with full-text — Search across IndexedDB
+- [ ] Implement email labeling/tagging — Custom tags for organizing applications
+- [ ] Add draft auto-recovery — Detect unsaved changes, prompt on navigation away
 
-## 🎯 Project Vision
-A privacy-first, offline-capable AI email orchestrator running entirely in the browser using WebGPU.
+## Stage 7: Performance & PWA
 
-## 🏗️ Architectural Principles
-1. **Privacy First:** All AI inference MUST happen client-side via WebLLM/WebGPU. No user data should be sent to external LLM providers.
-2. **Local Infrastructure:** Since the app is self-hosted or run locally, "backend" services (Next.js API routes) are considered part of the local environment and are acceptable for tasks like PDF parsing or SMTP sending.
-3. **Responsive Performance:** Heavy computations (AI) should ideally run in Web Workers to keep the UI at 60fps.
-4. **Safety & Accuracy:** The AI must use the "Bracket System" (`[Placeholder]`) for any missing information to prevent hallucinations in professional correspondence.
+- [ ] Implement lazy loading with React Suspense — Dynamically import `@mlc-ai/web-llm` only on AI Chat
+- [ ] Preload critical UI assets — Fonts, sidebar, mail list to reduce LCP
+- [ ] Implement model weight caching — Cache API for cross-session persistence
+- [ ] Profile Web Worker communication — Audit postMessage patterns, eliminate bottlenecks
+- [ ] Integrate bundle analyzer — `@next/bundle-analyzer`, minimize AI import footprint
+- [ ] Convert to PWA with `next-pwa` — Service worker, offline fallback, manifest, install prompt
 
-## 🛠️ Tech Stack Standards
-- **Framework:** Next.js 15 (App Router).
-- **Styling:** Tailwind CSS.
-- **AI:** `@mlc-ai/web-llm` for WebGPU inference.
-- **PDF:** `pdf-parse` for server-side text extraction.
-- **Email:** `nodemailer` for SMTP orchestration.
+## Stage 8: Advanced AI & Polish
 
-## 📋 Phase Recommendations & Guidelines
+- [ ] Create fine-tuning hook with local RAG — Upload past emails, build local vector index for personalization
+- [ ] Add accessibility (a11y) — ARIA labels, keyboard navigation, screen reader support
+- [ ] Add dark/light mode toggle — System preference detection + manual toggle
+- [ ] Implement undo/redo for drafts — History stack for body edits
+- [ ] Add onboarding walkthrough — First-visit tutorial: Dashboard → Profile → Compose
 
-### Phase 1: WebGPU & AI Core
-- **Workerization:** Offload `AIService` to a Web Worker.
-- **Hardware Intelligence:** Use adapter limits to auto-select the best model tier (Tiny/Small/Medium).
+---
 
-### Phase 2: Knowledge Extraction
-- **API Route Parsing:** Use `src/app/api/extract/route.ts` for PDF processing.
-- **Chunking/Cleaning:** Implement utilities to strip headers/footers from JDs to save context tokens.
+## JP — Browser, Themes & Models
 
-### Phase 3: AI Personalization
-- **Strict Prompting:** Maintain a library of system prompts that enforce the bracket rule.
-- **Visual Validation:** Implement a UI that scans drafts for `[...]` and highlights them.
+- [x] Browser auto-detection — Detect Brave, Chrome, Edge, Firefox, Safari, Opera when WebGPU is unavailable
+- [x] Brave WebGPU enable instructions — Show `brave://flags/#enable-unsafe-webgpu` steps + Linux Vulkan note in-app
+- [x] Chrome/Edge/Firefox/Safari WebGPU instructions — Per-browser setup steps linked from the dashboard
+- [x] Expanded WebGPU model catalog — 7 models across 5 categories (Fast, Smart, Powerful, Vision, Fallback)
+- [x] Vision-capable model support — Phi-3.5-vision can read images (resumes, screenshots, JDs) via WebGPU
+- [x] Categorized model picker — Dropdown groups with hover tooltips showing description, VRAM, and use case
+- [x] Vision-aware GPU recommendation — Dashboard suggests the best model + vision option based on detected VRAM
+- [x] Resume Scanner vision integration — Image upload routes to WebGPU vision model when available; falls back to external API
+- [ ] Replace Ocean theme with 7 nature themes — Desert, Aurora, Sunset, Tundra, Volcano, Autumn, Tropical
+- [ ] Nature theme animated backgrounds — Canvas animations for each new theme (sand dunes, aurora curtain, snowfall, etc.)
+- [ ] Update theme picker UI — Replace single Ocean button with 7 new theme options
 
-### Phase 4: Delivery
-- **Secure Storage:** Store SMTP configuration in encrypted `localStorage` or session-based state.
-- **Drafting UX:** Always allow manual editing before sending.
+---
 
-### Phase 5: Scalability & Advanced Features
-- **Session Persistence:** Implement IndexedDB for offline storage of drafts and email logs.
-- **Model Fine-Tuning:** Explore client-side LoRA fine-tuning for specific writing styles.
-- **Cache Management:** Use Cache API for model weight persistence to avoid re-downloading on refresh.
+## Improvements & Technical Debt
 
-## 🚀 Performance Optimization Strategy
-To ensure a high-performance experience, apply the following:
-1. **Lazy Loading:** Dynamically import the `@mlc-ai/web-llm` library only when the user navigates to the AI composer.
-2. **Model Caching:** Utilize the browser's Cache API to store large model weights locally, preventing repeated downloads.
-3. **Chunked Processing:** Stream AI output tokens directly to the UI to minimize perceived latency.
-4. **Main Thread Offloading:** Move ALL AI inference and heavy data processing to a Dedicated Web Worker to maintain a consistent 60 FPS UI.
-5. **Memory Management:** Explicitly call `engine.destroy()` or clear WebGPU buffers when navigating away from the chat interface to prevent memory leaks.
+- Replace `any` casts in `webgpu.ts` and `aiService.ts` with proper types from `@webgpu/types`
+- Add Vitest unit tests for PDF cleaning, mock AI generation, WebGPU fallbacks
+- Set up GitHub Actions — lint + type-check + build on every PR
+- Pin exact dependency versions to avoid `pdf-parse` v2 / `web-llm` v0.2.84-style breakage
+- Wrap AI Chat and PDF upload in React error boundaries
+- Add client-side event log (IndexedDB) for debugging AI failures
