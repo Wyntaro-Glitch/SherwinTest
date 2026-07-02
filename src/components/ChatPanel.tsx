@@ -5,6 +5,8 @@ import { ChatMessage } from "@/types";
 import { aiService, AVAILABLE_MODELS, getModelsByCategory, ModelCategory } from "@/utils/aiService";
 import { getProviderConfig, chatCompletion } from "@/utils/aiProvider";
 import { detectWebGPUSupport } from "@/utils/webgpu";
+import { getToolByName, parseToolCall, TOOLS } from "@/utils/tools";
+import { buildAppContext } from "@/utils/stateContext";
 
 function getProviderLabel(type: string): string {
   switch (type) {
@@ -48,6 +50,28 @@ You can help users with:
   return prompt;
 }
 
+async function getAIResponse(
+  messages: { role: string; content: string }[],
+  onChunk: (text: string) => void,
+  config: { provider: string }
+): Promise<string> {
+  if (config.provider === "ollama" || config.provider === "lmstudio" || config.provider === "api") {
+    return chatCompletion({
+      messages: messages as { role: "user" | "assistant" | "system"; content: string }[],
+      onChunk,
+    });
+  }
+  const chatMessages: ChatMessage[] = messages
+    .filter(m => m.role !== "system")
+    .map(m => ({
+      id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      sender: m.role === "user" ? "user" : "assistant",
+      text: m.content,
+      timestamp: new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
+    }));
+  return aiService.getChatCompletion(chatMessages, onChunk);
+}
+
 export default function ChatPanel() {
   const [model, setModel] = useState<string>("mock-assistant");
   const [statusText, setStatusText] = useState("");
@@ -81,7 +105,7 @@ export default function ChatPanel() {
     {
       id: "welcome",
       sender: "assistant",
-      text: "Hi! I'm the SherwinMail assistant. Ask me about the app — email drafts, settings, themes, resume scanning, or how things work. For general questions, I'll search the web for answers.",
+      text: "Hi! I'm the SherwinMail assistant. I can help with email drafts, settings, themes, resume scanning — and I can also take actions for you like creating drafts, navigating folders, searching emails, and more. Try asking me to do something!",
       timestamp: new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
     },
   ]);
@@ -120,6 +144,48 @@ export default function ChatPanel() {
     } finally {
       setIsInitializing(false);
     }
+  };
+
+  const executeToolAndSummarize = async (
+    toolName: string,
+    args: Record<string, any>,
+    onChunk: (text: string) => void
+  ): Promise<string> => {
+    const tool = getToolByName(toolName);
+    if (!tool) {
+      onChunk(`Unknown tool "${toolName}". Available tools: ${TOOLS.map(t => t.name).join(", ")}`);
+      return `Error: tool "${toolName}" not found.`;
+    }
+
+    // Show what's happening
+    onChunk(`Running: ${tool.name}...`);
+
+    const result = await tool.execute(args);
+
+    // Get the AI to summarize
+    const config = getProviderConfig();
+    const summaryMessages = [
+      { role: "system" as const, content: `You are a helpful assistant. A tool "${toolName}" was executed with these arguments: ${JSON.stringify(args)}.\n\nThe tool returned: ${result}\n\nSummarize what happened in a friendly, concise way for the user. Do not mention JSON or tool calls.` },
+      { role: "user" as const, content: "What happened?" },
+    ];
+
+    let summary = "";
+    if (config.provider === "ollama" || config.provider === "lmstudio" || config.provider === "api") {
+      await chatCompletion({
+        messages: summaryMessages,
+        onChunk: (chunk) => { summary = chunk; onChunk(chunk); },
+      });
+    } else {
+      const mockMessages: ChatMessage[] = [
+        { id: "sys-summary", sender: "assistant", text: "", timestamp: "" },
+        { id: "user-summary", sender: "user", text: "What happened?", timestamp: "" },
+      ];
+      summary = await aiService.getChatCompletion(mockMessages, (chunk) => {
+        onChunk(chunk);
+      }, undefined, summaryMessages[0].content);
+    }
+
+    return summary || result;
   };
 
   const handleSendMessage = async (textToSend?: string) => {
@@ -179,24 +245,51 @@ export default function ChatPanel() {
         setIsSearching(false);
       }
 
-      if (config.provider === "ollama" || config.provider === "lmstudio" || config.provider === "api") {
-        await chatCompletion({
-          messages: [
-            { role: "system", content: buildSystemPrompt(searchContext) },
-            ...updatedMessages.map((m) => ({ role: m.sender as "user" | "assistant", content: m.text })),
-          ],
-          onChunk: (chunk) => {
+      // Build system prompt with app context + tools for action-oriented queries
+      const isActionQuery = APP_KEYWORDS.some(kw => messageText.toLowerCase().includes(kw));
+      let systemPrompt: string;
+      if (isActionQuery && !isExternal) {
+        systemPrompt = buildSystemPrompt() + "\n\n" + buildAppContext();
+      } else {
+        systemPrompt = buildSystemPrompt(searchContext);
+      }
+
+      // Get full response text first (collect chunks but don't display raw tool calls)
+      let fullResponse = "";
+      const shouldShowChunks = !isActionQuery || isExternal;
+
+      await getAIResponse(
+        [
+          { role: "system", content: systemPrompt },
+          ...updatedMessages.map((m) => ({ role: m.sender === "user" ? "user" : "assistant", content: m.text })),
+        ],
+        (chunk) => {
+          fullResponse = chunk;
+          // Only stream visible content for non-action queries
+          if (shouldShowChunks) {
             setMessages((prev) =>
               prev.map((msg) => (msg.id === aiMessageId ? { ...msg, text: chunk } : msg))
             );
-          },
-        });
-      } else {
-        await aiService.getChatCompletion(updatedMessages, (chunk) => {
+          }
+        },
+        config
+      );
+
+      // Check for tool calls in the response
+      const toolCall = parseToolCall(fullResponse);
+
+      if (toolCall) {
+        // Execute the tool and stream the summary
+        await executeToolAndSummarize(toolCall.toolName, toolCall.args, (chunk) => {
           setMessages((prev) =>
             prev.map((msg) => (msg.id === aiMessageId ? { ...msg, text: chunk } : msg))
           );
         });
+      } else if (!shouldShowChunks) {
+        // For action queries that didn't produce a tool call, show the raw response
+        setMessages((prev) =>
+          prev.map((msg) => (msg.id === aiMessageId ? { ...msg, text: fullResponse } : msg))
+        );
       }
     } catch (e: any) {
       console.error(e);
@@ -213,7 +306,7 @@ export default function ChatPanel() {
   };
 
   const suggestions = [
-    "How do I set up an AI provider?",
+    "Create a draft to hiring@company.com about the React position",
     "How does the Resume Scanner work?",
     "What themes are available?",
     "What is 1+1?",
@@ -283,7 +376,6 @@ export default function ChatPanel() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                 </svg>
               </div>
-              {/* Selected model info tooltip */}
               <div className="absolute top-full mt-1 right-0 w-64 bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-xl hidden group-hover:block z-50">
                 {(() => {
                   const m = AVAILABLE_MODELS.find(m => m.id === model);
@@ -389,7 +481,7 @@ export default function ChatPanel() {
             type="text"
             placeholder={
               isEngineLoaded || isUsingProvider
-                ? "Ask about SherwinMail or any question..."
+                ? "Ask me to do something — create a draft, search emails, navigate..."
                 : "Load WebGPU engine or configure a provider in Settings..."
             }
             value={inputValue}
