@@ -146,7 +146,7 @@ export default function Home() {
 
   return (
     <ThemeProvider>
-      <ThemeBackground />
+      <ErrorBoundary label="ThemeBackground"><ThemeBackground /></ErrorBoundary>
       <ProviderSetupModal
         open={showProviderSetup}
         onComplete={(cfg) => {
@@ -204,7 +204,7 @@ export default function Home() {
         </div>
       )}
 
-      <Toast />
+      <ErrorBoundary label="Toast"><Toast /></ErrorBoundary>
 
       <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans overflow-hidden h-screen selection:bg-indigo-500 selection:text-white">
       <header className="border-b border-slate-900 bg-slate-950/80 backdrop-blur-md px-6 py-3.5 flex items-center justify-between shrink-0 select-none">
@@ -237,9 +237,10 @@ export default function Home() {
         </div>
       </header>
 
-      <PrivacyBanner />
+      <ErrorBoundary label="PrivacyBanner"><PrivacyBanner /></ErrorBoundary>
 
       <div className="flex-1 flex overflow-hidden">
+      <ErrorBoundary label="MailSidebar">
         <MailSidebar
           currentFolder={currentFolder}
           setCurrentFolder={(f) => {
@@ -250,6 +251,7 @@ export default function Home() {
           onCompose={composeDraft}
           onMoveEmail={(id, folder) => updateEmail(id, { status: folder })}
         />
+      </ErrorBoundary>
 
         {currentFolder === "home" ? (
           <ErrorBoundary label="Dashboard">
@@ -422,18 +424,22 @@ export default function Home() {
           </div>
         ) : (
           <>
+          <ErrorBoundary label="MailList">
             <MailList
               folder={currentFolder}
               emails={emails}
               selectedEmailId={selectedEmailId}
               onSelectEmail={selectEmail}
             />
+          </ErrorBoundary>
+          <ErrorBoundary label="MailDetail">
             <MailDetail
               email={selectedEmail}
               onUpdateEmail={(updated) => updateEmail(updated.id, updated)}
               onDeleteEmail={(id) => deleteEmail(id)}
               onReply={(replyTo) => replyToEmail(replyTo)}
             />
+          </ErrorBoundary>
           </>
         )}
       </div>
@@ -441,7 +447,7 @@ export default function Home() {
       <footer className="border-t border-slate-900 bg-slate-950 py-3.5 px-6 text-center text-[10px] text-slate-500 font-mono shrink-0 select-none">
         &copy; {new Date().getFullYear()} SherwinMail. Press <kbd className="text-indigo-400">?</kbd> for keyboard shortcuts.
       </footer>
-    </div>
+      </div>
     </ThemeProvider>
   );
 }
