@@ -100,6 +100,24 @@ export default function Home() {
     if (view !== "inbox") setSelectedEmailId(null);
   };
 
+  // Show provider setup modal on first visit (if no provider configured)
+  useEffect(() => {
+    if (hasLoaded) {
+      const configured = localStorage.getItem("sherwin_ai_provider");
+      if (!configured) {
+        setShowProviderSetup(true);
+      }
+    }
+  }, [hasLoaded]);
+
+  const formatBytes = (bytes?: number) => {
+    if (bytes === undefined) return "N/A";
+    const gb = bytes / (1024 * 1024 * 1024);
+    if (gb >= 1) return `${gb.toFixed(2)} GB`;
+    const mb = bytes / (1024 * 1024);
+    return `${mb.toFixed(2)} MB`;
+  };
+
   const selectedEmail = emails.find((e) => e.id === selectedEmailId) || null;
 
   const handleSendSelected = () => {
