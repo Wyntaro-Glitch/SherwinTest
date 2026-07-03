@@ -7,7 +7,7 @@ export default function BrowserWebGPUHelp() {
   const [browser, setBrowser] = useState<BrowserDetectionResult | null>(null);
 
   useEffect(() => {
-    detectBrowser().then(setBrowser);
+    detectBrowser().then(setBrowser).catch(() => setBrowser(null));
   }, []);
 
   if (!browser) return null;

@@ -5,6 +5,52 @@ import { persist } from "zustand/middleware";
 
 type SmtpProvider = "protonmail" | "gmail" | "custom";
 
+let cryptoKey: CryptoKey | null = null;
+
+async function getCryptoKey(): Promise<CryptoKey> {
+  if (cryptoKey) return cryptoKey;
+  const stored = sessionStorage.getItem("sherwin_smtp_key");
+  if (stored) {
+    const keyData = JSON.parse(stored);
+    cryptoKey = await crypto.subtle.importKey(
+      "raw",
+      new Uint8Array(keyData),
+      { name: "AES-GCM" },
+      false,
+      ["encrypt", "decrypt"]
+    );
+    return cryptoKey;
+  }
+  cryptoKey = await crypto.subtle.generateKey(
+    { name: "AES-GCM", length: 256 },
+    true,
+    ["encrypt", "decrypt"]
+  );
+  const exported = await crypto.subtle.exportKey("raw", cryptoKey);
+  sessionStorage.setItem("sherwin_smtp_key", JSON.stringify(Array.from(new Uint8Array(exported))));
+  return cryptoKey;
+}
+
+async function encryptPassword(plaintext: string): Promise<string> {
+  const key = await getCryptoKey();
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encoded = new TextEncoder().encode(plaintext);
+  const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoded);
+  const combined = new Uint8Array(iv.length + encrypted.byteLength);
+  combined.set(iv);
+  combined.set(new Uint8Array(encrypted), iv.length);
+  return btoa(String.fromCharCode(...combined));
+}
+
+async function decryptPassword(combinedBase64: string): Promise<string> {
+  const key = await getCryptoKey();
+  const combined = Uint8Array.from(atob(combinedBase64), (c) => c.charCodeAt(0));
+  const iv = combined.slice(0, 12);
+  const data = combined.slice(12);
+  const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, data);
+  return new TextDecoder().decode(decrypted);
+}
+
 interface SmtpStore {
   provider: SmtpProvider;
   emailAddress: string;
@@ -50,7 +96,12 @@ export const useSmtpStore = create<SmtpStore>()(
       setSmtpServer: (smtpServer) => set({ smtpServer }),
       setSmtpPort: (smtpPort) => set({ smtpPort }),
       setSmtpUser: (smtpUser) => set({ smtpUser }),
-      setSmtpPassword: (smtpPassword) => set({ smtpPassword }),
+      setSmtpPassword: (smtpPassword) => {
+        set({ smtpPassword });
+        encryptPassword(smtpPassword).then((encrypted) => {
+          localStorage.setItem("sherwin_smtp_encrypted", encrypted);
+        }).catch((e) => console.error("Failed to encrypt SMTP password:", e));
+      },
       setIsTestingConnection: (isTestingConnection) => set({ isTestingConnection }),
       setTestResult: (testResult, testMessage = "") => set({ testResult, testMessage }),
 
@@ -81,8 +132,22 @@ export const useSmtpStore = create<SmtpStore>()(
         smtpServer: state.smtpServer,
         smtpPort: state.smtpPort,
         smtpUser: state.smtpUser,
-        smtpPassword: state.smtpPassword,
       }),
     }
   )
 );
+
+// On store init, try to load encrypted password from previous session
+if (typeof window !== "undefined") {
+  setTimeout(async () => {
+    try {
+      const encrypted = localStorage.getItem("sherwin_smtp_encrypted");
+      if (encrypted) {
+        const plaintext = await decryptPassword(encrypted);
+        useSmtpStore.getState().setSmtpPassword(plaintext);
+      }
+    } catch {
+      localStorage.removeItem("sherwin_smtp_encrypted");
+    }
+  }, 0);
+}
