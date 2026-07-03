@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { MessageContentPart } from "@/types";
 import { getProviderConfig, chatCompletion } from "@/utils/aiProvider";
 
@@ -312,10 +312,16 @@ export default function ResumeScanner() {
     }
   };
 
+  const latestAiOutput = useMemo(
+    () => [...messages].reverse().find(
+      (m) => m.role === "assistant" && typeof m.content === "string" && m.content.length > 100
+    ),
+    [messages]
+  );
+
   const acceptLatestOutput = () => {
-    const lastAi = [...messages].reverse().find((m) => m.role === "assistant" && typeof m.content === "string" && m.content.length > 100);
-    if (lastAi && typeof lastAi.content === "string") {
-      setResumeContent(lastAi.content);
+    if (latestAiOutput && typeof latestAiOutput.content === "string") {
+      setResumeContent(latestAiOutput.content);
     }
   };
 
@@ -324,10 +330,6 @@ export default function ResumeScanner() {
     const file = e.dataTransfer.files[0];
     if (file) handleFileSelect(file);
   };
-
-  const latestAiOutput = [...messages].reverse().find(
-    (m) => m.role === "assistant" && typeof m.content === "string" && m.content.length > 100
-  );
 
   return (
     <div className="flex-1 bg-slate-950 flex overflow-hidden">

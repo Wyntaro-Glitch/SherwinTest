@@ -1,6 +1,7 @@
 import { ChatMessage } from "@/types";
 
 export type ModelCategory = "text-fast" | "text-smart" | "text-powerful" | "vision" | "fallback";
+export type HardwareTier = "low" | "medium" | "high";
 
 export interface ModelOption {
   id: string;
@@ -10,6 +11,17 @@ export interface ModelOption {
   category: ModelCategory;
   description: string;
   recommendedFor: string;
+  tier: HardwareTier | "fallback";
+}
+
+export interface TierPreset {
+  tier: HardwareTier;
+  label: string;
+  description: string;
+  minVram: string;
+  icon: string;
+  defaultModelId: string;
+  availableModelIds: string[];
 }
 
 export const AVAILABLE_MODELS: ModelOption[] = [
@@ -21,6 +33,7 @@ export const AVAILABLE_MODELS: ModelOption[] = [
     category: "text-fast",
     description: "Fastest option, best for simple chat & drafting",
     recommendedFor: "Low VRAM (< 2 GB) or quick responses",
+    tier: "low",
   },
   {
     id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC",
@@ -30,6 +43,7 @@ export const AVAILABLE_MODELS: ModelOption[] = [
     category: "text-smart",
     description: "Good balance of speed and quality for drafting",
     recommendedFor: "General use — email drafting, JD analysis",
+    tier: "low",
   },
   {
     id: "Phi-3.5-vision-instruct-q4f16_1-MLC",
@@ -39,6 +53,7 @@ export const AVAILABLE_MODELS: ModelOption[] = [
     category: "vision",
     description: "Can read images — resumes, screenshots, JDs",
     recommendedFor: "Resume scanning, image-based content",
+    tier: "medium",
   },
   {
     id: "Phi-3.5-mini-instruct-q4f16_1-MLC",
@@ -48,6 +63,7 @@ export const AVAILABLE_MODELS: ModelOption[] = [
     category: "text-smart",
     description: "Proven small model, great for drafting & analysis",
     recommendedFor: "High-quality drafting & JD analysis",
+    tier: "medium",
   },
   {
     id: "Llama-3.2-3B-Instruct-q4f16_1-MLC",
@@ -57,6 +73,7 @@ export const AVAILABLE_MODELS: ModelOption[] = [
     category: "text-smart",
     description: "Modern architecture, strong for its size",
     recommendedFor: "Balanced smart drafting",
+    tier: "medium",
   },
   {
     id: "Qwen3-4B-q4f16_1-MLC",
@@ -66,6 +83,7 @@ export const AVAILABLE_MODELS: ModelOption[] = [
     category: "text-powerful",
     description: "Good reasoning with larger context window",
     recommendedFor: "Complex multi-step drafting",
+    tier: "medium",
   },
   {
     id: "Llama-3-8B-Instruct-q4f16_1-MLC-1k",
@@ -75,6 +93,7 @@ export const AVAILABLE_MODELS: ModelOption[] = [
     category: "text-powerful",
     description: "Best text-only quality, highest VRAM needed",
     recommendedFor: "Maximum quality, complex multi-step tasks",
+    tier: "high",
   },
   {
     id: "mock-assistant",
@@ -84,6 +103,54 @@ export const AVAILABLE_MODELS: ModelOption[] = [
     category: "fallback",
     description: "No GPU needed — basic template generation",
     recommendedFor: "When no WebGPU is available",
+    tier: "fallback",
+  },
+];
+
+export const PRESET_TIERS: TierPreset[] = [
+  {
+    tier: "low",
+    label: "Low Spec",
+    description: "Integrated GPUs, older laptops, < 3 GB VRAM",
+    minVram: "0 GB",
+    icon: "💻",
+    defaultModelId: "Qwen2.5-0.5B-Instruct-q4f16_1-MLC",
+    availableModelIds: [
+      "Qwen2.5-0.5B-Instruct-q4f16_1-MLC",
+      "Qwen2.5-1.5B-Instruct-q4f16_1-MLC",
+    ],
+  },
+  {
+    tier: "medium",
+    label: "Medium Spec",
+    description: "GTX 1060+, RTX 2060+, M1/M2 Macs, 3-6 GB VRAM",
+    minVram: "3 GB",
+    icon: "⚡",
+    defaultModelId: "Phi-3.5-mini-instruct-q4f16_1-MLC",
+    availableModelIds: [
+      "Phi-3.5-mini-instruct-q4f16_1-MLC",
+      "Llama-3.2-3B-Instruct-q4f16_1-MLC",
+      "Qwen3-4B-q4f16_1-MLC",
+      "Phi-3.5-vision-instruct-q4f16_1-MLC",
+      "Qwen2.5-1.5B-Instruct-q4f16_1-MLC",
+    ],
+  },
+  {
+    tier: "high",
+    label: "High Spec",
+    description: "RTX 3080+, M1 Pro/Max/Ultra, 6+ GB VRAM",
+    minVram: "6 GB",
+    icon: "🚀",
+    defaultModelId: "Llama-3-8B-Instruct-q4f16_1-MLC-1k",
+    availableModelIds: [
+      "Llama-3-8B-Instruct-q4f16_1-MLC-1k",
+      "Phi-3.5-vision-instruct-q4f16_1-MLC",
+      "Qwen3-4B-q4f16_1-MLC",
+      "Phi-3.5-mini-instruct-q4f16_1-MLC",
+      "Llama-3.2-3B-Instruct-q4f16_1-MLC",
+      "Qwen2.5-1.5B-Instruct-q4f16_1-MLC",
+      "Qwen2.5-0.5B-Instruct-q4f16_1-MLC",
+    ],
   },
 ];
 
@@ -92,10 +159,35 @@ export function getModelsByCategory(category: ModelCategory): ModelOption[] {
 }
 
 export function getRecommendedModel(vramGB: number): ModelOption {
-  if (vramGB >= 5) return AVAILABLE_MODELS.find((m) => m.id === "Phi-3.5-vision-instruct-q4f16_1-MLC")!;
-  if (vramGB >= 4) return AVAILABLE_MODELS.find((m) => m.id === "Phi-3.5-vision-instruct-q4f16_1-MLC")!;
-  if (vramGB >= 3) return AVAILABLE_MODELS.find((m) => m.id === "Qwen2.5-1.5B-Instruct-q4f16_1-MLC")!;
+  if (vramGB >= 6) return AVAILABLE_MODELS.find((m) => m.id === "Llama-3-8B-Instruct-q4f16_1-MLC-1k")!;
+  if (vramGB >= 4) return AVAILABLE_MODELS.find((m) => m.id === "Phi-3.5-mini-instruct-q4f16_1-MLC")!;
+  if (vramGB >= 2) return AVAILABLE_MODELS.find((m) => m.id === "Qwen2.5-1.5B-Instruct-q4f16_1-MLC")!;
   return AVAILABLE_MODELS.find((m) => m.id === "Qwen2.5-0.5B-Instruct-q4f16_1-MLC")!;
+}
+
+export function getTierForVram(vramGB: number): HardwareTier {
+  if (vramGB >= 6) return "high";
+  if (vramGB >= 3) return "medium";
+  return "low";
+}
+
+export function getPresetForTier(tier: HardwareTier): TierPreset {
+  return PRESET_TIERS.find((p) => p.tier === tier)!;
+}
+
+export function getModelsByTier(tier: HardwareTier | "fallback"): ModelOption[] {
+  if (tier === "fallback") return AVAILABLE_MODELS.filter((m) => m.tier === "fallback");
+  const preset = PRESET_TIERS.find((p) => p.tier === tier);
+  if (!preset) return [];
+  return preset.availableModelIds
+    .map((id) => AVAILABLE_MODELS.find((m) => m.id === id))
+    .filter((m): m is ModelOption => m !== undefined);
+}
+
+export function getDefaultModelForTier(tier: HardwareTier): ModelOption {
+  const preset = PRESET_TIERS.find((p) => p.tier === tier);
+  if (!preset) return AVAILABLE_MODELS[0];
+  return AVAILABLE_MODELS.find((m) => m.id === preset.defaultModelId) || AVAILABLE_MODELS[0];
 }
 
 export class AIService {

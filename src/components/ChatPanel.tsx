@@ -1,12 +1,30 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+
+// Response cache (60s TTL, exact text match only)
+const responseCache = new Map<string, { response: string; time: number }>();
+const RESPONSE_CACHE_TTL = 60 * 1000;
+
+function getCachedResponse(text: string): string | null {
+  const key = text.toLowerCase().trim();
+  const cached = responseCache.get(key);
+  if (cached && Date.now() - cached.time < RESPONSE_CACHE_TTL) return cached.response;
+  return null;
+}
+
+function setCachedResponse(text: string, response: string): void {
+  const key = text.toLowerCase().trim();
+  responseCache.set(key, { response, time: Date.now() });
+}
 import { ChatMessage } from "@/types";
 import { aiService, AVAILABLE_MODELS, getModelsByCategory, ModelCategory } from "@/utils/aiService";
 import { getProviderConfig, chatCompletion } from "@/utils/aiProvider";
 import { detectWebGPUSupport } from "@/utils/webgpu";
 import { getToolByName, parseToolCall, TOOLS } from "@/utils/tools";
 import { buildAppContext } from "@/utils/stateContext";
+import { useUserMemoryStore } from "@/stores/userMemoryStore";
+import FilePreview from "@/components/FilePreview";
 
 function getProviderLabel(type: string): string {
   switch (type) {
@@ -26,39 +44,39 @@ const APP_KEYWORDS = [
   "smtp", "account", "connection", "task", "scheduler",
 ];
 
+// Web search cache (session lifetime, 5 min TTL)
+const searchCache = new Map<string, { data: string; time: number }>();
+const SEARCH_CACHE_TTL = 5 * 60 * 1000;
+
 function needsWebSearch(text: string): boolean {
-  const lower = text.toLowerCase();
+  const lower = text.toLowerCase().trim();
+  // Skip trivial queries
+  if (lower.length < 10 || /^(hi|hello|hey|thanks|thank you|bye|goodbye|ok|okay|yes|no|what|who|how are you)([.!?]*)$/i.test(lower)) return false;
   return !APP_KEYWORDS.some((kw) => lower.includes(kw));
 }
 
 function buildSystemPrompt(searchContext?: string): string {
-  let prompt = `You are the SherwinMail AI assistant — a privacy-focused, offline-first email outreach and resume optimization platform.
-
-You can help users with:
-- Drafting and optimizing cold outreach emails
-- Resume/CV analysis and improvement (via the Resume Scanner)
-- App settings: AI providers (Ollama, LM Studio, API Key, WebGPU), themes (Dark, Light, Cyberpunk, Sakura, Forest, Ocean), SMTP connections, system tasks
-- General email productivity tips`;
+  let prompt = "You are SherwinMail AI. Help with email drafting, settings, resume scanning, and app actions.";
 
   if (searchContext) {
-    prompt += `\n\n--- Web Search Results ---\n${searchContext}\n---\n\nThe user's question is NOT about the app. Use the search results above to answer their question. If the search results don't contain enough information, use your own knowledge.`;
-  } else {
-    prompt += `\n\nThe user is asking about the app. Answer using your knowledge of SherwinMail's features and tools.`;
+    prompt += `\n\n--- Web Results ---\n${searchContext}\n---\nAnswer using these results if relevant.`;
   }
 
-  prompt += `\n\nBe concise, helpful, and accurate. If you're unsure about something, say so rather than making it up.`;
+  prompt += "\nBe concise. Use tools when asked to do something.";
   return prompt;
 }
 
 async function getAIResponse(
   messages: { role: string; content: string }[],
   onChunk: (text: string) => void,
-  config: { provider: string }
+  config: { provider: string },
+  signal?: AbortSignal
 ): Promise<string> {
   if (config.provider === "ollama" || config.provider === "lmstudio" || config.provider === "api") {
     return chatCompletion({
       messages: messages as { role: "user" | "assistant" | "system"; content: string }[],
       onChunk,
+      signal,
     });
   }
   const chatMessages: ChatMessage[] = messages
@@ -81,6 +99,10 @@ export default function ChatPanel() {
   const [providerLabel, setProviderLabel] = useState("Mock");
   const [isSearching, setIsSearching] = useState(false);
   const [featureWarning, setFeatureWarning] = useState("");
+  const [attachedFiles, setAttachedFiles] = useState<{ name: string; type: string; data: string }[]>([]);
+  const [previewFile, setPreviewFile] = useState<{ name: string; type: string; data: string } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cancelRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const config = getProviderConfig();
@@ -157,41 +179,26 @@ export default function ChatPanel() {
       return `Error: tool "${toolName}" not found.`;
     }
 
-    // Show what's happening
     onChunk(`Running: ${tool.name}...`);
 
     const result = await tool.execute(args);
 
-    // Get the AI to summarize
-    const config = getProviderConfig();
-    const summaryMessages = [
-      { role: "system" as const, content: `You are a helpful assistant. A tool "${toolName}" was executed with these arguments: ${JSON.stringify(args)}.\n\nThe tool returned: ${result}\n\nSummarize what happened in a friendly, concise way for the user. Do not mention JSON or tool calls.` },
-      { role: "user" as const, content: "What happened?" },
-    ];
-
-    let summary = "";
-    if (config.provider === "ollama" || config.provider === "lmstudio" || config.provider === "api") {
-      await chatCompletion({
-        messages: summaryMessages,
-        onChunk: (chunk) => { summary = chunk; onChunk(chunk); },
-      });
-    } else {
-      const mockMessages: ChatMessage[] = [
-        { id: "sys-summary", sender: "assistant", text: "", timestamp: "" },
-        { id: "user-summary", sender: "user", text: "What happened?", timestamp: "" },
-      ];
-      summary = await aiService.getChatCompletion(mockMessages, (chunk) => {
-        onChunk(chunk);
-      }, undefined, summaryMessages[0].content);
-    }
-
-    return summary || result;
+    // Use template summary instead of a second LLM call
+    const friendlyName = toolName.replace(/_/g, " ");
+    const summary = `✅ Done! I ${friendlyName}` + (result ? `. ${result.replace(/^["']|["']$/g, "").slice(0, 200)}` : "");
+    onChunk(summary);
+    return summary;
   };
 
   const handleSendMessage = async (textToSend?: string) => {
     const messageText = textToSend || inputValue;
     if (!messageText.trim() || isGenerating) return;
     if (!textToSend) setInputValue("");
+
+    // Cancel any in-flight request
+    cancelRef.current?.abort();
+    cancelRef.current = new AbortController();
+    const signal = cancelRef.current.signal;
 
     const userMessage: ChatMessage = {
       id: `user-${Date.now()}`,
@@ -228,31 +235,81 @@ export default function ChatPanel() {
           )
         );
 
-        try {
-          const res = await fetch(`/api/search?q=${encodeURIComponent(messageText)}`);
-          const data = await res.json();
-          if (data.ok && data.results?.length > 0) {
-            searchContext = data.results.map((r: any, i: number) =>
-              `${i + 1}. ${r.title}\n   ${r.snippet}\n   ${r.url}`
-            ).join("\n\n");
-            if (data.abstract) {
-              searchContext = `Summary: ${data.abstract}\n\n${searchContext}`;
+        // Check cache first
+        const cacheKey = messageText.toLowerCase().trim();
+        const cached = searchCache.get(cacheKey);
+        if (cached && Date.now() - cached.time < SEARCH_CACHE_TTL) {
+          searchContext = cached.data;
+        } else {
+          try {
+            const res = await fetch(`/api/search?q=${encodeURIComponent(messageText)}`);
+            const data = await res.json();
+            if (data.ok && data.results?.length > 0) {
+              searchContext = data.results.map((r: any, i: number) =>
+                `${i + 1}. ${r.title}\n   ${r.snippet}\n   ${r.url}`
+              ).join("\n\n");
+              if (data.abstract) {
+                searchContext = `Summary: ${data.abstract}\n\n${searchContext}`;
+              }
+              searchCache.set(cacheKey, { data: searchContext!, time: Date.now() });
             }
+          } catch {
+            // search failed — fall back to model knowledge
           }
-        } catch {
-          // search failed — fall back to model knowledge
         }
         setIsSearching(false);
       }
 
-      // Build system prompt with app context + tools for action-oriented queries
+      // Smart context: only inject app state when query is action-oriented
       const isActionQuery = APP_KEYWORDS.some(kw => messageText.toLowerCase().includes(kw));
+      const isEmailQuery = /email|draft|inbox|sent|mail|compose|reply|message|inbox/i.test(messageText);
+      const isPersonalQuery = /my|i am|my name|remember|i like|i work/i.test(messageText);
+
       let systemPrompt: string;
       if (isActionQuery && !isExternal) {
-        systemPrompt = buildSystemPrompt() + "\n\n" + buildAppContext();
+        systemPrompt = buildSystemPrompt() + "\n\n";
+        if (isEmailQuery) {
+          systemPrompt += buildAppContext();
+        } else {
+          const ctx = buildAppContext();
+          systemPrompt += "## App State\n" + ctx.split("## Tools")[0] + "\n\n## Tools\n" + ctx.split("## Instructions")[1];
+        }
       } else {
         systemPrompt = buildSystemPrompt(searchContext);
       }
+
+      // Selective memory injection
+      const userMemory = useUserMemoryStore.getState().getAllMemoriesFormatted();
+      if (userMemory && isPersonalQuery) {
+        systemPrompt += "\n\n" + userMemory;
+      }
+
+      // File context (only if attached)
+      if (attachedFiles.length > 0) {
+        const images = attachedFiles.filter((f) => f.type.startsWith("image/"));
+        const docs = attachedFiles.filter((f) => !f.type.startsWith("image/"));
+        if (docs.length > 0) {
+          systemPrompt += "\n\n--- Files ---\n" + docs.map((f) => `[${f.name}]`).join("\n");
+        }
+        if (images.length > 0) {
+          systemPrompt += `\n\nUser attached ${images.length} image(s).`;
+        }
+      }
+
+      // Check cache for non-action, non-file queries
+      const cacheKey = messageText.toLowerCase().trim();
+      const cachedResponse = (!isActionQuery && attachedFiles.length === 0) ? getCachedResponse(cacheKey) : null;
+
+      if (cachedResponse) {
+        setMessages((prev) =>
+          prev.map((msg) => (msg.id === aiMessageId ? { ...msg, text: cachedResponse } : msg))
+        );
+        setIsGenerating(false);
+        return;
+      }
+
+      // Sliding window: keep system prompt + last 10 messages
+      const recentMessages = updatedMessages.slice(-10);
 
       // Get full response text first (collect chunks but don't display raw tool calls)
       let fullResponse = "";
@@ -261,7 +318,7 @@ export default function ChatPanel() {
       await getAIResponse(
         [
           { role: "system", content: systemPrompt },
-          ...updatedMessages.map((m) => ({ role: m.sender === "user" ? "user" : "assistant", content: m.text })),
+          ...recentMessages.map((m) => ({ role: m.sender === "user" ? "user" : "assistant", content: m.text })),
         ],
         (chunk) => {
           fullResponse = chunk;
@@ -272,11 +329,51 @@ export default function ChatPanel() {
             );
           }
         },
-        config
+        config,
+        signal
       );
 
-      // Check for tool calls in the response
-      const toolCall = parseToolCall(fullResponse);
+      // Cache non-action responses
+      if (!isActionQuery && attachedFiles.length === 0 && fullResponse) {
+        setCachedResponse(cacheKey, fullResponse);
+      }
+
+      // Check for tool calls in the response with auto-retry
+      let toolCall = parseToolCall(fullResponse);
+      let toolCallRetries = 0;
+      const MAX_TOOL_CALL_RETRIES = 1;
+
+      while (!toolCall && !shouldShowChunks && toolCallRetries < MAX_TOOL_CALL_RETRIES) {
+        toolCallRetries++;
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === aiMessageId ? { ...msg, text: `Formatting tool call...` } : msg
+          )
+        );
+
+        fullResponse = "";
+        await getAIResponse(
+          [
+            {
+              role: "system",
+              content:
+                systemPrompt +
+                "\n\nCRITICAL: You MUST respond with a valid tool call. Use the format: {\"tool\": \"tool_name\", \"args\": {...}} with no additional text, markdown, or explanation.",
+            },
+            ...recentMessages.map((m) => ({
+              role: m.sender === "user" ? "user" : "assistant",
+              content: m.text,
+            })),
+          ],
+          (chunk) => {
+            fullResponse = chunk;
+          },
+          config,
+          signal
+        );
+
+        toolCall = parseToolCall(fullResponse);
+      }
 
       if (toolCall) {
         // Execute the tool and stream the summary
@@ -292,6 +389,7 @@ export default function ChatPanel() {
         );
       }
     } catch (e: any) {
+      if (e?.name === "AbortError") return; // cancelled by user
       console.error(e);
       setMessages((prev) =>
         prev.map((msg) =>
@@ -302,6 +400,7 @@ export default function ChatPanel() {
       );
     } finally {
       setIsGenerating(false);
+      setAttachedFiles([]);
     }
   };
 
@@ -475,8 +574,62 @@ export default function ChatPanel() {
         </div>
       )}
 
+      {previewFile && <FilePreview file={previewFile} onClose={() => setPreviewFile(null)} />}
+
       <div className="p-4 border-t border-slate-900 bg-slate-950/80 shrink-0">
-        <div className="relative flex items-center">
+        {attachedFiles.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-3">
+            {attachedFiles.map((f, i) => (
+              <div key={i} className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs">
+                {f.type.startsWith("image/") ? (
+                  <img src={f.data} alt="" className="w-6 h-6 rounded object-cover" />
+                ) : (
+                  <svg className="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                  </svg>
+                )}
+                <button onClick={() => setPreviewFile(f)} className="text-slate-300 hover:text-white truncate max-w-[120px] cursor-pointer">
+                  {f.name}
+                </button>
+                <button onClick={() => setAttachedFiles((p) => p.filter((_, j) => j !== i))} className="text-slate-500 hover:text-rose-400 transition-colors cursor-pointer">
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="relative flex items-center gap-2">
+          <input
+            type="file"
+            ref={fileInputRef}
+            accept="image/*,application/pdf"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              const files = Array.from(e.target.files || []);
+              files.forEach((file) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                  const data = reader.result as string;
+                  setAttachedFiles((p) => [...p, { name: file.name, type: file.type, data }]);
+                };
+                reader.readAsDataURL(file);
+              });
+              e.target.value = "";
+            }}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isGenerating}
+            className="p-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-400 rounded-xl transition-colors cursor-pointer shrink-0"
+            title="Attach image or PDF"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+            </svg>
+          </button>
           <input
             type="text"
             placeholder={

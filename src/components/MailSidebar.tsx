@@ -5,6 +5,7 @@ interface MailSidebarProps {
   setCurrentFolder: (folder: MailFolder) => void;
   emails: Email[];
   onCompose: () => void;
+  onMoveEmail?: (emailId: string, toFolder: "inbox" | "draft" | "sent") => void;
 }
 
 export default function MailSidebar({
@@ -12,10 +13,15 @@ export default function MailSidebar({
   setCurrentFolder,
   emails,
   onCompose,
+  onMoveEmail,
 }: MailSidebarProps) {
-  const inboxCount = emails.filter((e) => e.status === "inbox" && !e.isRead).length;
-  const draftsCount = emails.filter((e) => e.status === "draft").length;
-  const sentCount = emails.filter((e) => e.status === "sent").length;
+  const counts = emails.reduce((acc, e) => {
+    if (e.status === "inbox" && !e.isRead) acc.inboxUnread++;
+    if (e.status === "draft") acc.drafts++;
+    if (e.status === "sent") acc.sent++;
+    return acc;
+  }, { inboxUnread: 0, drafts: 0, sent: 0 });
+  const { inboxUnread: inboxCount, drafts: draftsCount, sent: sentCount } = counts;
 
   const folders = [
     {
@@ -89,6 +95,12 @@ export default function MailSidebar({
             <button
               key={folder.id}
               onClick={() => setCurrentFolder(folder.id)}
+              onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }}
+              onDrop={(e) => {
+                e.preventDefault();
+                const emailId = e.dataTransfer.getData("text/plain");
+                if (emailId && onMoveEmail) onMoveEmail(emailId, folder.id as "inbox" | "draft" | "sent");
+              }}
               className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-semibold transition-all duration-150 cursor-pointer ${
                 isActive
                   ? "bg-indigo-500/10 text-indigo-400 border-l-2 border-indigo-500 pl-2.5"

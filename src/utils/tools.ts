@@ -26,6 +26,11 @@ function extractJobTitle(text: string): string | null {
 export const TOOLS: Tool[] = [
   {
     name: "create_draft",
+    description: "Create draft",
+    parameters: [
+      { name: "to", type: "string", description: "To", required: true },
+      { name: "subject", type: "string", description: "Subject", required: true },
+      { name: "body", type: "string", description: "Body", required: true },
     description: "Create a new email draft in the drafts folder",
     parameters: [
       { name: "to", type: "string", description: "Recipient email address", required: true },
@@ -49,6 +54,10 @@ export const TOOLS: Tool[] = [
   },
   {
     name: "reply_to_email",
+    description: "Reply to an email",
+    parameters: [
+      { name: "emailQuery", type: "string", description: "Find email by sender/subject", required: true },
+      { name: "body", type: "string", description: "Body", required: true },
     description: "Create a reply to an existing email. Finds the email by searching subject or sender.",
     parameters: [
       { name: "emailQuery", type: "string", description: "Search term to find the email (sender name, subject keyword, or partial match)", required: true },
@@ -82,6 +91,9 @@ export const TOOLS: Tool[] = [
   },
   {
     name: "send_email",
+    description: "Send a draft",
+    parameters: [
+      { name: "query", type: "string", description: "Find draft by subject/recipient", required: true },
     description: "Send a draft email by finding it via subject keyword or recipient",
     parameters: [
       { name: "query", type: "string", description: "Search term to find the draft (subject keyword or recipient)", required: true },
@@ -104,6 +116,9 @@ export const TOOLS: Tool[] = [
   },
   {
     name: "navigate_to",
+    description: "Navigate to a folder",
+    parameters: [
+      { name: "folder", type: "string", description: "inbox/draft/sent/chat/resume/settings/home", required: true },
     description: "Navigate to a different folder or view in the application",
     parameters: [
       { name: "folder", type: "string", description: "Target: inbox, draft, sent, chat, resume, settings, home", required: true },
@@ -118,6 +133,9 @@ export const TOOLS: Tool[] = [
   },
   {
     name: "search_emails",
+    description: "Search emails by keyword",
+    parameters: [
+      { name: "query", type: "string", description: "Keyword or phrase", required: true },
     description: "Search across all emails by keyword and return results",
     parameters: [
       { name: "query", type: "string", description: "Search keyword or phrase", required: true },
@@ -138,6 +156,7 @@ export const TOOLS: Tool[] = [
   },
   {
     name: "get_app_state",
+    description: "Get app state summary",
     description: "Get the current application state summary",
     parameters: [],
     execute: async () => {
@@ -158,6 +177,9 @@ export const TOOLS: Tool[] = [
   },
   {
     name: "delete_email",
+    description: "Delete an email",
+    parameters: [
+      { name: "query", type: "string", description: "Find email by subject/sender/keyword", required: true },
     description: "Delete an email or draft by searching for it",
     parameters: [
       { name: "query", type: "string", description: "Search term to find the email to delete (subject, sender, or keyword)", required: true },
@@ -177,6 +199,12 @@ export const TOOLS: Tool[] = [
   },
   {
     name: "update_draft",
+    description: "Update a draft",
+    parameters: [
+      { name: "query", type: "string", description: "Find draft by subject/recipient", required: true },
+      { name: "to", type: "string", description: "New to" },
+      { name: "subject", type: "string", description: "New subject" },
+      { name: "body", type: "string", description: "New body" },
     description: "Update fields of an existing draft found by search",
     parameters: [
       { name: "query", type: "string", description: "Search term to find the draft (subject or recipient)", required: true },
@@ -202,6 +230,10 @@ export const TOOLS: Tool[] = [
   },
   {
     name: "change_setting",
+    description: "Change a setting",
+    parameters: [
+      { name: "setting", type: "string", description: "theme", required: true },
+      { name: "value", type: "string", description: "Value", required: true },
     description: "Change an application setting",
     parameters: [
       { name: "setting", type: "string", description: "Setting name: theme (dark/light/cyberpunk/sakura/forest/ocean)", required: true },
@@ -228,6 +260,12 @@ export const TOOLS: Tool[] = [
   },
   {
     name: "generate_and_create_draft",
+    description: "Generate draft from job description",
+    parameters: [
+      { name: "jobDescription", type: "string", description: "Job description text", required: true },
+      { name: "recipientEmail", type: "string", description: "To", required: true },
+      { name: "companyName", type: "string", description: "Company" },
+      { name: "hiringManager", type: "string", description: "Hiring manager" },
     description: "Parse a job description and create a complete outreach draft in one step",
     parameters: [
       { name: "jobDescription", type: "string", description: "The full job description text", required: true },

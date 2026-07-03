@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Email, MailFolder } from "@/types";
 
 interface MailListProps {
@@ -16,15 +16,19 @@ export default function MailList({
 }: MailListProps) {
   const [searchQuery, setSearchQuery] = useState("");
 
-  const filteredEmails = emails
-    .filter((e) => e.status === folder)
-    .filter(
-      (e) =>
-        e.subject.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        e.to.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        e.from.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        e.body.toLowerCase().includes(searchQuery.toLowerCase())
-    );
+  const filteredEmails = useMemo(
+    () =>
+      emails
+        .filter((e) => e.status === folder)
+        .filter(
+          (e) =>
+            e.subject.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            e.to.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            e.from.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            e.body.toLowerCase().includes(searchQuery.toLowerCase())
+        ),
+    [emails, folder, searchQuery]
+  );
 
   const getFolderTitle = () => {
     switch (folder) {
@@ -87,6 +91,11 @@ export default function MailList({
               <div
                 key={email.id}
                 onClick={() => onSelectEmail(email.id)}
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.setData("text/plain", email.id);
+                  e.dataTransfer.effectAllowed = "move";
+                }}
                 className={`p-4 flex flex-col gap-1.5 cursor-pointer hover:bg-slate-900/40 transition-colors border-l-2 ${
                   isSelected
                     ? "bg-slate-900/70 border-indigo-500"

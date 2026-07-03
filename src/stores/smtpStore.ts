@@ -50,7 +50,12 @@ export const useSmtpStore = create<SmtpStore>()(
       setSmtpServer: (smtpServer) => set({ smtpServer }),
       setSmtpPort: (smtpPort) => set({ smtpPort }),
       setSmtpUser: (smtpUser) => set({ smtpUser }),
-      setSmtpPassword: (smtpPassword) => set({ smtpPassword }),
+      setSmtpPassword: (smtpPassword) => {
+        set({ smtpPassword });
+        encryptPassword(smtpPassword).then((encrypted) => {
+          localStorage.setItem("sherwin_smtp_encrypted", encrypted);
+        }).catch((e) => console.error("Failed to encrypt SMTP password:", e));
+      },
       setIsTestingConnection: (isTestingConnection) => set({ isTestingConnection }),
       setTestResult: (testResult, testMessage = "") => set({ testResult, testMessage }),
 

@@ -52,10 +52,17 @@ Stripe HR Operations`,
   },
 ];
 
+interface UndoEntry {
+  emails: Email[];
+  description: string;
+}
+
 interface EmailStore {
   emails: Email[];
   currentFolder: MailFolder;
   selectedEmailId: string | null;
+  undoStack: UndoEntry[];
+  undoDescription: string | null;
   addEmail: (email: Email) => void;
   updateEmail: (id: string, updates: Partial<Email>) => void;
   deleteEmail: (id: string) => void;
@@ -65,6 +72,8 @@ interface EmailStore {
   composeDraft: () => void;
   replyToEmail: (replyTo: Email) => void;
   selectEmail: (id: string) => void;
+  undoEmailAction: () => void;
+  clearUndo: () => void;
 }
 
 export const useEmailStore = create<EmailStore>()(
@@ -73,20 +82,37 @@ export const useEmailStore = create<EmailStore>()(
       emails: DEFAULT_EMAILS,
       currentFolder: "home",
       selectedEmailId: null,
+      undoStack: [],
+      undoDescription: null,
 
       addEmail: (email) =>
-        set((s) => ({ emails: [email, ...s.emails] })),
+        set((s) => ({
+          emails: [email, ...s.emails],
+          undoStack: [...s.undoStack, { emails: s.emails, description: `Add "${email.subject || "draft"}"` }].slice(-20),
+          undoDescription: `Add "${email.subject || "draft"}"`,
+        })),
 
       updateEmail: (id, updates) =>
-        set((s) => ({
-          emails: s.emails.map((e) => (e.id === id ? { ...e, ...updates } : e)),
-        })),
+        set((s) => {
+          const prev = s.emails.find((e) => e.id === id);
+          if (!prev) return {};
+          return {
+            emails: s.emails.map((e) => (e.id === id ? { ...e, ...updates } : e)),
+            undoStack: [...s.undoStack, { emails: s.emails, description: `Update "${prev.subject || "draft"}"` }].slice(-20),
+            undoDescription: `Update "${prev.subject || "draft"}"`,
+          };
+        }),
 
       deleteEmail: (id) =>
-        set((s) => ({
-          emails: s.emails.filter((e) => e.id !== id),
-          selectedEmailId: s.selectedEmailId === id ? null : s.selectedEmailId,
-        })),
+        set((s) => {
+          const prev = s.emails.find((e) => e.id === id);
+          return {
+            emails: s.emails.filter((e) => e.id !== id),
+            selectedEmailId: s.selectedEmailId === id ? null : s.selectedEmailId,
+            undoStack: [...s.undoStack, { emails: s.emails, description: `Delete "${prev?.subject || "email"}"` }].slice(-20),
+            undoDescription: `Delete "${prev?.subject || "email"}"`,
+          };
+        }),
 
       setEmails: (emails) => set({ emails }),
 
@@ -111,6 +137,8 @@ export const useEmailStore = create<EmailStore>()(
             emails: [newDraft, ...s.emails],
             currentFolder: "draft",
             selectedEmailId: newDraft.id,
+            undoStack: [...s.undoStack, { emails: s.emails, description: "New draft" }].slice(-20),
+            undoDescription: "New draft",
           };
         }),
 
@@ -130,6 +158,8 @@ export const useEmailStore = create<EmailStore>()(
             emails: [newDraft, ...s.emails],
             currentFolder: "draft",
             selectedEmailId: newDraft.id,
+            undoStack: [...s.undoStack, { emails: s.emails, description: `Reply to "${replyTo.subject}"` }].slice(-20),
+            undoDescription: `Reply to "${replyTo.subject}"`,
           };
         }),
 
@@ -140,6 +170,19 @@ export const useEmailStore = create<EmailStore>()(
             e.id === id ? { ...e, isRead: true } : e
           ),
         })),
+
+      undoEmailAction: () =>
+        set((s) => {
+          if (s.undoStack.length === 0) return {};
+          const prev = s.undoStack[s.undoStack.length - 1];
+          return {
+            emails: prev.emails,
+            undoStack: s.undoStack.slice(0, -1),
+            undoDescription: null,
+          };
+        }),
+
+      clearUndo: () => set({ undoDescription: null }),
     }),
     {
       name: "sherwin_emails",
