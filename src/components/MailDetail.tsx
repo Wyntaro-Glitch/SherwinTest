@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Email } from "@/types";
 import { aiService } from "@/utils/aiService";
 import { getProviderConfig, chatCompletion } from "@/utils/aiProvider";
@@ -21,6 +21,16 @@ export default function MailDetail({
   const [body, setBody] = useState("");
   const [jobText, setJobText] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const emailIdRef = useRef<string | undefined>(undefined);
+  const toRef = useRef(to);
+  const subjectRef = useRef(subject);
+  const bodyRef = useRef(body);
+
+  // Keep refs in sync
+  toRef.current = to;
+  subjectRef.current = subject;
+  bodyRef.current = body;
 
   // Sync state with selected email draft
   useEffect(() => {
@@ -28,6 +38,7 @@ export default function MailDetail({
       setTo(email.to);
       setSubject(email.subject);
       setBody(email.body);
+      emailIdRef.current = email.id;
     }
   }, [email?.id]);
 
@@ -48,18 +59,24 @@ export default function MailDetail({
     );
   }
 
-  // Handle draft field changes & auto-save
+  // Handle draft field changes & auto-save (debounced 500ms)
   const handleFieldChange = (field: "to" | "subject" | "body", value: string) => {
     if (field === "to") setTo(value);
     if (field === "subject") setSubject(value);
     if (field === "body") setBody(value);
 
-    onUpdateEmail({
-      ...email,
-      to: field === "to" ? value : to,
-      subject: field === "subject" ? value : subject,
-      body: field === "body" ? value : body,
-    });
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const currentId = email?.id;
+    debounceRef.current = setTimeout(() => {
+      if (emailIdRef.current === currentId) {
+        onUpdateEmail({
+          ...email!,
+          to: toRef.current,
+          subject: subjectRef.current,
+          body: bodyRef.current,
+        });
+      }
+    }, 500);
   };
 
   // Run AI generation from Job description
