@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, memo } from "react";
 import { Email, MailFolder } from "@/types";
 
 interface MailListProps {
@@ -8,7 +8,7 @@ interface MailListProps {
   onSelectEmail: (id: string) => void;
 }
 
-export default function MailList({
+const MailList = memo(function MailList({
   folder,
   emails,
   selectedEmailId,
@@ -129,4 +129,6 @@ export default function MailList({
       </div>
     </div>
   );
-}
+});
+
+export default MailList;

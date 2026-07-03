@@ -1,11 +1,14 @@
 "use client";
 
+import { memo } from "react";
+
 interface FilePreviewProps {
-  file: { name: string; type: string; data: string };
+  file: { name: string; type: string; data: string } | null;
   onClose: () => void;
 }
 
-export default function FilePreview({ file, onClose }: FilePreviewProps) {
+const FilePreview = memo(function FilePreview({ file, onClose }: FilePreviewProps) {
+  if (!file) return null;
   const isImage = file.type.startsWith("image/");
   const isPdf = file.type === "application/pdf";
 
@@ -38,4 +41,6 @@ export default function FilePreview({ file, onClose }: FilePreviewProps) {
       </div>
     </div>
   );
-}
+});
+
+export default FilePreview;

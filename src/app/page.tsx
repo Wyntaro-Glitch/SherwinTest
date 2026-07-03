@@ -102,13 +102,11 @@ export default function Home() {
 
   // Show provider setup modal on first visit (if no provider configured)
   useEffect(() => {
-    if (hasLoaded) {
-      const configured = localStorage.getItem("sherwin_ai_provider");
-      if (!configured) {
-        setShowProviderSetup(true);
-      }
+    const configured = localStorage.getItem("sherwin_ai_provider");
+    if (!configured) {
+      setShowProviderSetup(true);
     }
-  }, [hasLoaded]);
+  }, []);
 
   const formatBytes = (bytes?: number) => {
     if (bytes === undefined) return "N/A";

@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { MailFolder, Email } from "@/types";
 
 interface MailSidebarProps {
@@ -8,7 +9,7 @@ interface MailSidebarProps {
   onMoveEmail?: (emailId: string, toFolder: "inbox" | "draft" | "sent") => void;
 }
 
-export default function MailSidebar({
+const MailSidebar = memo(function MailSidebar({
   currentFolder,
   setCurrentFolder,
   emails,
@@ -237,4 +238,6 @@ export default function MailSidebar({
       </div>
     </div>
   );
-}
+});
+
+export default MailSidebar;

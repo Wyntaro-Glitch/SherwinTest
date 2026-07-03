@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { useToastStore } from "@/stores/toastStore";
 
 const variantStyles: Record<string, string> = {
@@ -16,7 +17,7 @@ const variantIcons: Record<string, string> = {
   warning: "M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z",
 };
 
-export default function Toast() {
+const Toast = memo(function Toast() {
   const { toasts, removeToast } = useToastStore();
 
   if (toasts.length === 0) return null;
@@ -52,4 +53,6 @@ export default function Toast() {
       ))}
     </div>
   );
-}
+});
+
+export default Toast;

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, memo } from "react";
 import { Email } from "@/types";
 import { aiService } from "@/utils/aiService";
 import { getProviderConfig, chatCompletion } from "@/utils/aiProvider";
@@ -10,7 +10,7 @@ interface MailDetailProps {
   onReply: (replyTo: Email) => void;
 }
 
-export default function MailDetail({
+const MailDetail = memo(function MailDetail({
   email,
   onUpdateEmail,
   onDeleteEmail,
@@ -343,4 +343,6 @@ export default function MailDetail({
       </div>
     </div>
   );
-}
+});
+
+export default MailDetail;
