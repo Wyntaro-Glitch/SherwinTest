@@ -1776,3 +1776,119 @@ Fixed 4 bugs that caused runtime errors or code quality issues:
 **Files changed:** `src/stores/smtpStore.ts`, `src/app/page.tsx`, `src/utils/tools.ts`, `src/utils/stateContext.ts`
 
 **Verification:** TypeScript compiles cleanly (`tsc --noEmit`). ESLint shows only pre-existing warnings unrelated to these changes.
+
+### PR 3 — SMTP Password Encryption with Web Crypto API (2026-07-12)
+
+Implemented AES-256-GCM encryption for SMTP credentials using the browser's native Web Crypto API. Passwords are now encrypted at rest in localStorage and the encryption key lives only in sessionStorage (cleared when the tab closes).
+
+| File | Purpose |
+|------|---------|
+| `src/utils/encryption.ts` | Core encryption module: `encryptPassword(plaintext)` and `decryptPassword(encrypted)` using AES-256-GCM. Key is generated on first use, stored in `sessionStorage` as raw bytes (base64-encoded). IV is 12 bytes, prepended to ciphertext. |
+| `src/hooks/useEncryptedStorage.ts` | React hook wrapping `encryptPassword`/`decryptPassword` for component-level encrypted localStorage reads/writes. Returns `{ value, isLoaded, set, remove }`. Handles decryption failures gracefully (clears stale data). |
+| `src/stores/smtpStore.ts` | Restored `encryptPassword()` call in `setSmtpPassword` — now imports the real implementation from `@/utils/encryption`. Passwords are encrypted before writing to `sherwin_smtp_encrypted` in localStorage. Also resolved nested merge conflict markers. |
+| `src/utils/tools.ts` | Resolved 10 nested merge conflict blocks (one per tool definition). Wrote clean version with single `description`/`parameters` per tool. |
+| `src/app/page.tsx` | Resolved merge conflict markers around the removed `hasLoaded` useEffect block. |
+
+**Security model:**
+- **Encryption key** → `sessionStorage` (exists only while tab is open, wiped on close)
+- **Ciphertext** → `localStorage` (persists across sessions, unreadable without the key)
+- **Each encrypt call** generates a fresh 12-byte IV (no nonce reuse)
+- **AES-256-GCM** provides both confidentiality and integrity (authentication tag)
+
+**Verification:** TypeScript compiles cleanly. ESLint shows only pre-existing warnings.
+
+### PR 4 — Real SMTP Send via Nodemailer (2026-07-12)
+
+Replaced simulated SMTP with real email delivery through a server-side API route using `nodemailer`. The `send_email` AI tool now attempts actual SMTP delivery when configured.
+
+| File | Change |
+|------|--------|
+| `src/app/api/send/route.ts` | **New.** POST endpoint accepting `{ host, port, user, pass, from, to, subject, text, html }`. Creates a `nodemailer` transporter, calls `sendMail()`. Returns `{ ok: true }` or `{ ok: false, error: "..." }`. 10s connection timeout, 5s greeting timeout. |
+| `src/stores/smtpStore.ts` | Added `sendEmail(to, subject, text)` action that calls `POST /api/send`. Replaced simulated `saveAndTest()` (`setTimeout` fake) with a real test: sends a test email to the user's own address. |
+| `src/utils/tools.ts` | `send_email` tool now calls `POST /api/send` if SMTP is configured. Reports whether delivery succeeded or failed. Falls back to marking status only when no SMTP is configured. |
+| `package.json` | Added `nodemailer` (^7.0.5) + `@types/nodemailer` (dev). |
+
+**Flow:**
+1. User configures SMTP in Settings (provider, server, port, credentials)
+2. "Save & Test Connection" sends a test email to their own address via `/api/send`
+3. AI tool `send_email` marks draft as sent AND attempts SMTP delivery
+4. Response clearly states whether email was actually delivered or just marked locally
+
+### PR 5 — Voice Input (2026-07-12)
+
+Added browser-based voice input via the Web Speech API (`SpeechRecognition`). Users click a mic button to dictate messages into the chat input.
+
+| File | Change |
+|------|--------|
+| `src/hooks/useVoiceInput.ts` | **New.** Custom React hook wrapping `webkitSpeechRecognition`. Returns `{ isListening, transcript, isSupported, error, startListening, stopListening }`. Supports interim results. Handles `no-speech` and `not-allowed` errors with clear messages. Cleans up on unmount. |
+| `src/types/speech.d.ts` | **New.** TypeScript declarations for `SpeechRecognition`, `SpeechRecognitionEvent`, `SpeechRecognitionErrorEvent`, and related interfaces on `Window`. |
+| `src/components/ChatPanel.tsx` | Imported `useVoiceInput`. Added mic button (mic icon / stop icon with `animate-pulse` + red background when active) between the attach button and the text input. Transcript is appended to `inputValue` when finalized. Error banner shown above the input when recognition fails. |
+
+**Behavior:**
+- Mic button only appears if the browser supports `SpeechRecognition`
+- Click to start → button turns red and pulses
+- Speech is transcribed in real-time (interim results) and appended to the input
+- User reviews the transcribed text before pressing Send
+- No auto-send — user stays in control
+
+### PR 6 — NLP Command Parser (2026-07-12)
+
+Added a regex-based natural language parser as a fallback when local models can't produce JSON tool calls. Enables basic command understanding even with models that ignore formatting instructions.
+
+| File | Change |
+|------|--------|
+| `src/utils/nlpParser.ts` | **New.** Pure function `parseNlpCommand(text)` → `{ toolName, args } \| null`. Regex patterns for 12 intents: `navigate`, `create_draft`, `search_emails`, `send_email`, `update_draft`, `delete_email`, `mark_read/unread`, `star/unstar`, `reply_email`, `schedule_send`, `view_email`. Extracts email addresses, subjects, body text, search queries, and folder names from natural language. |
+| `src/utils/tools.ts` | `parseToolCall()` now falls back to `parseNlpCommand()` after JSON and markdown block parsing fail. Imported `parseNlpCommand`. |
+
+**Examples:**
+| User says | Parsed as |
+|-----------|-----------|
+| "draft an email to alice@example.com about the meeting" | `create_draft` with `to`, `subject` |
+| "search emails from sarah" | `search_emails` with query |
+| "go to sent" | `navigate` with `folder: "sent"` |
+| "send the draft about project update" | `send_email` with query |
+| "star email about invoice" | `star_email` with query |
+| "reply to the last email saying sounds good" | `reply_email` with body |
+
+**Limitations:** Designed for common phrasings. Complex multi-step or ambiguous commands still require the AI model. No context/memory across turns.
+
+### PR 7 — Rule Engine: If-This-Then-That Automation (2026-07-12)
+
+Added a rule engine that lets users create automation rules through natural language via the AI chat. Rules evaluate incoming emails against conditions and execute actions.
+
+| File | Change |
+|------|--------|
+| `src/types/rule.ts` | **New.** Type definitions: `Rule`, `RuleCondition` (field/operator/value), `RuleAction` (type + params). Supports 6 operators (`contains`, `not_contains`, `equals`, `starts_with`, `ends_with`, `matches`/regex) and 6 action types (`create_draft`, `mark_read`, `star`, `delete`, `move_to_folder`, `send_notification`). |
+| `src/stores/ruleStore.ts` | **New.** Zustand store persisted to `sherwin_rules`. Actions: `addRule`, `updateRule`, `removeRule`, `toggleRule`, `getEnabledRules`. |
+| `src/utils/ruleEngine.ts` | **New.** `processEmail(email)` evaluates all enabled rules against an email. `evaluateAllRules()` runs all rules against all inbox emails. Supports AND/OR logic across multiple conditions per rule. |
+| `src/utils/tools.ts` | Added 3 new AI tools: `create_rule` (creates a rule from structured params), `list_rules` (shows all rules + trigger counts), `run_rules` (manually evaluates all rules). |
+
+**Example conversation:**
+```
+User: "When I get an email from a recruiter about React, auto-create a draft reply"
+AI:   [calls create_rule] → Rule "Recruiter React" created: when [from contains "recruiter" AND subject contains "react"] → [create_draft]
+```
+
+### PR 8 — Vitest Test Suite + GitHub Actions CI (2026-07-12)
+
+Added 32 unit tests across 3 test files covering the NLP parser, rule engine, and tool call parser. CI runs lint + test + build on push/PR.
+
+| File | Change |
+|------|--------|
+| `vitest.config.ts` | **New.** Vitest config with jsdom environment, React plugin, `@/` path alias. |
+| `src/__tests__/setup.ts` | **New.** Mocks `localStorage` for jsdom (zustand persist). |
+| `src/__tests__/nlpParser.test.ts` | **New.** 19 tests: navigate, create_draft, search, send, update, delete, mark_read/unread, star/unstar, reply, null for unknown input. |
+| `src/__tests__/ruleEngine.test.ts` | **New.** 6 tests: condition matching, disabled rules, any/all logic, regex operator, trigger count increment. |
+| `src/__tests__/tools.test.ts` | **New.** 7 tests: JSON parsing, markdown blocks, extra text, malformed JSON, NLP fallback. |
+| `.github/workflows/ci.yml` | **New.** GitHub Actions: checkout → setup-node → npm ci → lint → test → build. Runs on push to main/jp-plans- and PRs to main. |
+| `package.json` | Added `vitest`, `@testing-library/react`, `@testing-library/jest-dom`, `jsdom`, `@vitejs/plugin-react`. Added `test` and `test:watch` scripts. |
+
+### PR 9 — Interactive Onboarding Tutorial (2026-07-12)
+
+Added an 8-step interactive tutorial overlay that appears on first visit. Users can replay it anytime from Settings.
+
+| File | Change |
+|------|--------|
+| `src/components/Tutorial.tsx` | **New.** Full-screen modal with 8 steps: Welcome, AI Provider, Compose/Manage, Voice Input, NLP Commands, SMTP Setup, Automation Rules, Get Started. Progress bar, dot indicators, back/next/skip navigation. |
+| `src/stores/tutorialStore.ts` | **New.** Zustand store persisted to `sherwin_tutorial`. Tracks `completed` boolean and `currentStep`. Actions: `setStep`, `complete`, `reset`. |
+| `src/app/page.tsx` | Imported `Tutorial` and `useTutorialStore`. Renders `<Tutorial />` on first load. Added "Replay Tutorial" button in Settings section that calls `reset()`. |

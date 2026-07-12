@@ -7,6 +7,7 @@ import { useEmailStore } from "@/stores/emailStore";
 import { useSmtpStore } from "@/stores/smtpStore";
 import { useToastStore } from "@/stores/toastStore";
 import { useUserMemoryStore } from "@/stores/userMemoryStore";
+import { useTutorialStore } from "@/stores/tutorialStore";
 import { PRESET_TIERS, getModelsByTier, getDefaultModelForTier } from "@/utils/aiService";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import ErrorBoundary from "@/components/ErrorBoundary";
@@ -21,6 +22,7 @@ import ProviderSetupModal from "@/components/ProviderSetupModal";
 import ErrorModal from "@/components/ErrorModal";
 import ThemeBackground from "@/components/ThemeBackground";
 import Toast from "@/components/Toast";
+import Tutorial from "@/components/Tutorial";
 
 // Lazy-loaded conditionally rendered views
 const ChatPanel = dynamic(() => import("@/components/ChatPanel"), { ssr: false });
@@ -100,23 +102,6 @@ export default function Home() {
     if (view !== "inbox") setSelectedEmailId(null);
   };
 
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-  // Show provider setup modal on first visit (if no provider configured)
-  useEffect(() => {
-    const configured = localStorage.getItem("sherwin_ai_provider");
-    if (!configured) {
-      setShowProviderSetup(true);
-    }
-  }, []);
-
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
   const formatBytes = (bytes?: number) => {
     if (bytes === undefined) return "N/A";
     const gb = bytes / (1024 * 1024 * 1024);
@@ -156,6 +141,7 @@ export default function Home() {
   return (
     <ThemeProvider>
       <ErrorBoundary label="ThemeBackground"><ThemeBackground /></ErrorBoundary>
+      <Tutorial />
       <ProviderSetupModal
         open={showProviderSetup}
         onComplete={(cfg) => {
@@ -350,6 +336,22 @@ export default function Home() {
               <AppearanceSettings />
               <Suspense fallback={null}><ErrorMonitor /></Suspense>
               <Suspense fallback={null}><SystemTaskScheduler /></Suspense>
+
+              {/* Replay Tutorial */}
+              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-xl flex items-center justify-between">
+                <div>
+                  <h3 className="text-base font-bold text-white mb-1">Tutorial</h3>
+                  <p className="text-xs text-slate-500">Replay the interactive onboarding walkthrough.</p>
+                </div>
+                <button
+                  onClick={() => {
+                    useTutorialStore.getState().reset();
+                  }}
+                  className="py-1.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                >
+                  Replay Tutorial
+                </button>
+              </div>
 
               {/* Model Recommendations */}
               <DynamicModelRecommendations />
