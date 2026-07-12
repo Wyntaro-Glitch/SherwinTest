@@ -28,12 +28,15 @@ export const TOOLS: Tool[] = [
     name: "create_draft",
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     description: "Create draft",
     parameters: [
       { name: "to", type: "string", description: "To", required: true },
       { name: "subject", type: "string", description: "Subject", required: true },
       { name: "body", type: "string", description: "Body", required: true },
 =======
+=======
+>>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
     description: "Create a new email draft in the drafts folder",
@@ -62,11 +65,14 @@ export const TOOLS: Tool[] = [
     name: "reply_to_email",
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     description: "Reply to an email",
     parameters: [
       { name: "emailQuery", type: "string", description: "Find email by sender/subject", required: true },
       { name: "body", type: "string", description: "Body", required: true },
 =======
+=======
+>>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
     description: "Create a reply to an existing email. Finds the email by searching subject or sender.",
@@ -105,10 +111,13 @@ export const TOOLS: Tool[] = [
     name: "send_email",
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     description: "Send a draft",
     parameters: [
       { name: "query", type: "string", description: "Find draft by subject/recipient", required: true },
 =======
+=======
+>>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
     description: "Send a draft email by finding it via subject keyword or recipient",
@@ -136,10 +145,13 @@ export const TOOLS: Tool[] = [
     name: "navigate_to",
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     description: "Navigate to a folder",
     parameters: [
       { name: "folder", type: "string", description: "inbox/draft/sent/chat/resume/settings/home", required: true },
 =======
+=======
+>>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
     description: "Navigate to a different folder or view in the application",
@@ -159,10 +171,13 @@ export const TOOLS: Tool[] = [
     name: "search_emails",
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     description: "Search emails by keyword",
     parameters: [
       { name: "query", type: "string", description: "Keyword or phrase", required: true },
 =======
+=======
+>>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
     description: "Search across all emails by keyword and return results",
@@ -188,8 +203,11 @@ export const TOOLS: Tool[] = [
     name: "get_app_state",
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     description: "Get app state summary",
 =======
+=======
+>>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
     description: "Get the current application state summary",
@@ -215,10 +233,13 @@ export const TOOLS: Tool[] = [
     name: "delete_email",
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     description: "Delete an email",
     parameters: [
       { name: "query", type: "string", description: "Find email by subject/sender/keyword", required: true },
 =======
+=======
+>>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
     description: "Delete an email or draft by searching for it",
@@ -243,6 +264,7 @@ export const TOOLS: Tool[] = [
     name: "update_draft",
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     description: "Update a draft",
     parameters: [
       { name: "query", type: "string", description: "Find draft by subject/recipient", required: true },
@@ -250,6 +272,8 @@ export const TOOLS: Tool[] = [
       { name: "subject", type: "string", description: "New subject" },
       { name: "body", type: "string", description: "New body" },
 =======
+=======
+>>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
     description: "Update fields of an existing draft found by search",
@@ -280,11 +304,14 @@ export const TOOLS: Tool[] = [
     name: "change_setting",
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     description: "Change a setting",
     parameters: [
       { name: "setting", type: "string", description: "theme", required: true },
       { name: "value", type: "string", description: "Value", required: true },
 =======
+=======
+>>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
     description: "Change an application setting",
@@ -316,6 +343,7 @@ export const TOOLS: Tool[] = [
     name: "generate_and_create_draft",
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     description: "Generate draft from job description",
     parameters: [
       { name: "jobDescription", type: "string", description: "Job description text", required: true },
@@ -323,6 +351,8 @@ export const TOOLS: Tool[] = [
       { name: "companyName", type: "string", description: "Company" },
       { name: "hiringManager", type: "string", description: "Hiring manager" },
 =======
+=======
+>>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
     description: "Parse a job description and create a complete outreach draft in one step",

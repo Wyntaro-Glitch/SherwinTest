@@ -52,9 +52,13 @@ export const useSmtpStore = create<SmtpStore>()(
       setSmtpUser: (smtpUser) => set({ smtpUser }),
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
       setSmtpPassword: (smtpPassword) => {
         set({ smtpPassword });
       },
+=======
+      setSmtpPassword: (smtpPassword) => set({ smtpPassword }),
+>>>>>>> Stashed changes
 =======
       setSmtpPassword: (smtpPassword) => set({ smtpPassword }),
 >>>>>>> Stashed changes

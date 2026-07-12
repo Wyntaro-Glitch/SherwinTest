@@ -102,6 +102,7 @@ export default function Home() {
 
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
   // Show provider setup modal on first visit (if no provider configured)
   useEffect(() => {
     const configured = localStorage.getItem("sherwin_ai_provider");
@@ -110,6 +111,8 @@ export default function Home() {
     }
   }, []);
 
+=======
+>>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
 =======
