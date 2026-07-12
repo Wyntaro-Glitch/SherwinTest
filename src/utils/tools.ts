@@ -6,7 +6,6 @@ import { aiService } from "@/utils/aiService";
 import { parseNlpCommand } from "./nlpParser";
 import { evaluateAllRules } from "./ruleEngine";
 import { Rule, RuleCondition } from "@/types/rule";
-import { getAllTemplates, saveTemplate, deleteTemplate, addAuditEntry } from "@/utils/db";
 
 export interface ToolParameter {
   name: string;
@@ -352,59 +351,6 @@ export const TOOLS: Tool[] = [
       const triggered = evaluateAllRules();
       if (triggered.length === 0) return "No rules were triggered. No matching emails found.";
       return `Rules triggered: ${triggered.join(", ")}. Check your inbox/drafts for results.`;
-    },
-  },
-  {
-    name: "list_templates",
-    description: "List all saved email templates",
-    parameters: [],
-    execute: async () => {
-      const templates = await getAllTemplates();
-      if (templates.length === 0) return "No templates saved. Use save_template to create one.";
-      return templates.map((t) => `"${t.name}" (${t.category}) — Subject: "${t.subject || "(none)"}" | Created: ${new Date(t.createdAt).toLocaleDateString()}`).join("\n");
-    },
-  },
-  {
-    name: "save_template",
-    description: "Save the current draft as a reusable email template",
-    parameters: [
-      { name: "name", type: "string", description: "Template name", required: true },
-      { name: "category", type: "string", description: "Category: outreach, followup, networking, custom" },
-    ],
-    execute: async ({ name, category }) => {
-      const state = useEmailStore.getState();
-      const selected = state.emails.find((e) => e.id === state.selectedEmailId);
-      if (!selected) return "Error: no email selected. Select a draft first.";
-      const template = {
-        id: `tpl-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        name,
-        category: category || "custom",
-        subject: selected.subject,
-        body: selected.body,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      await saveTemplate(template);
-      await addAuditEntry({ timestamp: new Date().toISOString(), action: "template_create", details: `Created template "${name}"` });
-      return `Template "${name}" saved with subject "${selected.subject}". You can reuse it from the template library.`;
-    },
-  },
-  {
-    name: "apply_template",
-    description: "Apply a saved template to the current draft by searching template name",
-    parameters: [
-      { name: "query", type: "string", description: "Search term to find the template (name or keyword)", required: true },
-    ],
-    execute: async ({ query }) => {
-      const templates = await getAllTemplates();
-      const q = query.toLowerCase();
-      const template = templates.find((t) => t.name.toLowerCase().includes(q) || t.subject.toLowerCase().includes(q) || t.body.toLowerCase().includes(q));
-      if (!template) return `Error: no template found matching "${query}".`;
-      const state = useEmailStore.getState();
-      if (state.selectedEmailId) {
-        useEmailStore.getState().updateEmail(state.selectedEmailId, { subject: template.subject, body: template.body });
-      }
-      return `Applied template "${template.name}" to the current draft. Subject: "${template.subject}"`;
     },
   },
 ];

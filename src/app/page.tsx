@@ -8,8 +8,6 @@ import { useSmtpStore } from "@/stores/smtpStore";
 import { useToastStore } from "@/stores/toastStore";
 import { useUserMemoryStore } from "@/stores/userMemoryStore";
 import { useTutorialStore } from "@/stores/tutorialStore";
-import { useTemplateStore } from "@/stores/templateStore";
-import { useUserProfileStore } from "@/stores/userProfileStore";
 import { PRESET_TIERS, getModelsByTier, getDefaultModelForTier } from "@/utils/aiService";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import ErrorBoundary from "@/components/ErrorBoundary";
@@ -101,6 +99,14 @@ export default function Home() {
   const handleDashboardNavigate = (view: "inbox" | "chat" | "settings") => {
     setCurrentFolder(view);
     if (view !== "inbox") setSelectedEmailId(null);
+  };
+
+  const formatBytes = (bytes?: number) => {
+    if (bytes === undefined) return "N/A";
+    const gb = bytes / (1024 * 1024 * 1024);
+    if (gb >= 1) return `${gb.toFixed(2)} GB`;
+    const mb = bytes / (1024 * 1024);
+    return `${mb.toFixed(2)} MB`;
   };
 
   const selectedEmail = emails.find((e) => e.id === selectedEmailId) || null;
@@ -347,9 +353,6 @@ export default function Home() {
                   Replay Tutorial
                 </button>
               </div>
-
-              {/* Model Download Manager */}
-              <Suspense fallback={null}><ModelManager /></Suspense>
 
               {/* Model Recommendations */}
               <DynamicModelRecommendations />
