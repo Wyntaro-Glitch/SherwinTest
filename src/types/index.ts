@@ -7,7 +7,18 @@ export interface Email {
   status: "inbox" | "draft" | "sent";
   date: string;
   isRead: boolean;
+  labels?: string[];
+  threadId?: string;
+  parentEmailId?: string;
 }
+
+export type EmailLabel = {
+  id: string;
+  name: string;
+  color: string;
+};
+
+export type EmailTone = "formal" | "direct" | "creative";
 
 export interface ChatMessage {
   id: string;

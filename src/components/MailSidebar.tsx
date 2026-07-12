@@ -73,11 +73,12 @@ const MailSidebar = memo(function MailSidebar({
   ];
 
   return (
-    <div className="w-64 bg-slate-950 border-r border-slate-900 flex flex-col p-4 gap-6 select-none shrink-0 h-full">
+    <div className="w-64 bg-slate-950 border-r border-slate-900 flex flex-col p-4 gap-6 select-none shrink-0 h-full" role="navigation" aria-label="Mail sidebar">
       {/* Compose Button */}
       <button
         onClick={onCompose}
         className="w-full py-3.5 px-4 bg-gradient-to-tr from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700 text-white rounded-2xl font-bold text-sm tracking-wide shadow-lg shadow-indigo-500/10 flex items-center justify-center gap-2 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
+        aria-label="Compose new draft"
       >
         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
@@ -87,9 +88,10 @@ const MailSidebar = memo(function MailSidebar({
 
       {/* Main Mailbox Folders */}
       <div className="flex flex-col gap-1.5">
-        <p className="text-[10px] font-mono font-bold tracking-wider text-slate-500 uppercase px-3 mb-1">
+        <p className="text-[10px] font-mono font-bold tracking-wider text-slate-500 uppercase px-3 mb-1" id="mailboxes-label">
           Mailboxes
         </p>
+        <div role="listbox" aria-labelledby="mailboxes-label">
         {folders.map((folder) => {
           const isActive = currentFolder === folder.id;
           return (
@@ -102,6 +104,9 @@ const MailSidebar = memo(function MailSidebar({
                 const emailId = e.dataTransfer.getData("text/plain");
                 if (emailId && onMoveEmail) onMoveEmail(emailId, folder.id as "inbox" | "draft" | "sent");
               }}
+              role="option"
+              aria-selected={isActive}
+              aria-label={`${folder.name}${folder.count > 0 ? ` (${folder.count} unread)` : ""}`}
               className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-semibold transition-all duration-150 cursor-pointer ${
                 isActive
                   ? "bg-indigo-500/10 text-indigo-400 border-l-2 border-indigo-500 pl-2.5"
@@ -126,6 +131,7 @@ const MailSidebar = memo(function MailSidebar({
             </button>
           );
         })}
+        </div>
       </div>
 
       {/* Additional Actions / Views */}
