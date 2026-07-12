@@ -1,7 +1,11 @@
 import { Email, MailFolder, ThemeName } from "@/types";
 import { useEmailStore } from "@/stores/emailStore";
 import { useSmtpStore } from "@/stores/smtpStore";
+import { useRuleStore } from "@/stores/ruleStore";
 import { aiService } from "@/utils/aiService";
+import { parseNlpCommand } from "./nlpParser";
+import { evaluateAllRules } from "./ruleEngine";
+import { Rule, RuleCondition } from "@/types/rule";
 
 export interface ToolParameter {
   name: string;
@@ -26,25 +30,11 @@ function extractJobTitle(text: string): string | null {
 export const TOOLS: Tool[] = [
   {
     name: "create_draft",
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-    description: "Create draft",
-    parameters: [
-      { name: "to", type: "string", description: "To", required: true },
-      { name: "subject", type: "string", description: "Subject", required: true },
-      { name: "body", type: "string", description: "Body", required: true },
-=======
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
     description: "Create a new email draft in the drafts folder",
     parameters: [
       { name: "to", type: "string", description: "Recipient email address", required: true },
       { name: "subject", type: "string", description: "Email subject line", required: true },
       { name: "body", type: "string", description: "Email body content", required: true },
->>>>>>> Stashed changes
     ],
     execute: async ({ to, subject, body }) => {
       const draft: Email = {
@@ -63,23 +53,10 @@ export const TOOLS: Tool[] = [
   },
   {
     name: "reply_to_email",
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-    description: "Reply to an email",
-    parameters: [
-      { name: "emailQuery", type: "string", description: "Find email by sender/subject", required: true },
-      { name: "body", type: "string", description: "Body", required: true },
-=======
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
     description: "Create a reply to an existing email. Finds the email by searching subject or sender.",
     parameters: [
       { name: "emailQuery", type: "string", description: "Search term to find the email (sender name, subject keyword, or partial match)", required: true },
       { name: "body", type: "string", description: "Reply body content", required: true },
->>>>>>> Stashed changes
     ],
     execute: async ({ emailQuery, body }) => {
       const emails = useEmailStore.getState().emails;
@@ -109,24 +86,13 @@ export const TOOLS: Tool[] = [
   },
   {
     name: "send_email",
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-    description: "Send a draft",
-    parameters: [
-      { name: "query", type: "string", description: "Find draft by subject/recipient", required: true },
-=======
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
     description: "Send a draft email by finding it via subject keyword or recipient",
     parameters: [
       { name: "query", type: "string", description: "Search term to find the draft (subject keyword or recipient)", required: true },
->>>>>>> Stashed changes
     ],
     execute: async ({ query }) => {
       const emails = useEmailStore.getState().emails;
+      const smtp = useSmtpStore.getState();
       const q = query.toLowerCase();
       const draft = emails.find(e => e.status === "draft" && (
         e.subject.toLowerCase().includes(q) ||
@@ -134,30 +100,44 @@ export const TOOLS: Tool[] = [
         e.body.toLowerCase().includes(q)
       ));
       if (!draft) return `Error: no draft found matching "${query}".`;
-      useEmailStore.getState().updateEmail(draft.id, {
-        status: "sent",
-        date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }),
-      });
-      return `Sent email to ${draft.to} with subject "${draft.subject}".`;
+
+      const sentDate = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+      useEmailStore.getState().updateEmail(draft.id, { status: "sent", date: sentDate });
+
+      if (smtp.smtpServer && smtp.emailAddress) {
+        try {
+          const res = await fetch("/api/send", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              host: smtp.smtpServer,
+              port: smtp.smtpPort,
+              user: smtp.smtpUser || smtp.emailAddress,
+              pass: smtp.smtpPassword,
+              from: smtp.emailAddress,
+              to: draft.to,
+              subject: draft.subject,
+              text: draft.body,
+            }),
+          });
+          const data = await res.json();
+          if (data.ok) {
+            return `Sent email to ${draft.to} with subject "${draft.subject}" via SMTP.`;
+          }
+          return `Draft marked as sent, but SMTP delivery failed: ${data.error}. The email was not actually delivered.`;
+        } catch {
+          return `Draft marked as sent, but SMTP server unreachable. The email was not actually delivered.`;
+        }
+      }
+
+      return `Draft marked as sent (no SMTP configured — email was not actually delivered). Configure SMTP in Settings to send real emails.`;
     },
   },
   {
     name: "navigate_to",
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-    description: "Navigate to a folder",
-    parameters: [
-      { name: "folder", type: "string", description: "inbox/draft/sent/chat/resume/settings/home", required: true },
-=======
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
     description: "Navigate to a different folder or view in the application",
     parameters: [
       { name: "folder", type: "string", description: "Target: inbox, draft, sent, chat, resume, settings, home", required: true },
->>>>>>> Stashed changes
     ],
     execute: async ({ folder }) => {
       const validFolders: MailFolder[] = ["inbox", "draft", "sent", "chat", "resume", "settings", "home"];
@@ -169,21 +149,9 @@ export const TOOLS: Tool[] = [
   },
   {
     name: "search_emails",
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-    description: "Search emails by keyword",
-    parameters: [
-      { name: "query", type: "string", description: "Keyword or phrase", required: true },
-=======
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
     description: "Search across all emails by keyword and return results",
     parameters: [
       { name: "query", type: "string", description: "Search keyword or phrase", required: true },
->>>>>>> Stashed changes
     ],
     execute: async ({ query }) => {
       const emails = useEmailStore.getState().emails;
@@ -201,17 +169,7 @@ export const TOOLS: Tool[] = [
   },
   {
     name: "get_app_state",
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-    description: "Get app state summary",
-=======
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
     description: "Get the current application state summary",
->>>>>>> Stashed changes
     parameters: [],
     execute: async () => {
       const state = useEmailStore.getState();
@@ -231,21 +189,9 @@ export const TOOLS: Tool[] = [
   },
   {
     name: "delete_email",
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-    description: "Delete an email",
-    parameters: [
-      { name: "query", type: "string", description: "Find email by subject/sender/keyword", required: true },
-=======
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
     description: "Delete an email or draft by searching for it",
     parameters: [
       { name: "query", type: "string", description: "Search term to find the email to delete (subject, sender, or keyword)", required: true },
->>>>>>> Stashed changes
     ],
     execute: async ({ query }) => {
       const emails = useEmailStore.getState().emails;
@@ -262,27 +208,12 @@ export const TOOLS: Tool[] = [
   },
   {
     name: "update_draft",
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-    description: "Update a draft",
-    parameters: [
-      { name: "query", type: "string", description: "Find draft by subject/recipient", required: true },
-      { name: "to", type: "string", description: "New to" },
-      { name: "subject", type: "string", description: "New subject" },
-      { name: "body", type: "string", description: "New body" },
-=======
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
     description: "Update fields of an existing draft found by search",
     parameters: [
       { name: "query", type: "string", description: "Search term to find the draft (subject or recipient)", required: true },
       { name: "to", type: "string", description: "New recipient email (optional)" },
       { name: "subject", type: "string", description: "New subject line (optional)" },
       { name: "body", type: "string", description: "New body content (optional)" },
->>>>>>> Stashed changes
     ],
     execute: async ({ query, ...fields }) => {
       const emails = useEmailStore.getState().emails;
@@ -302,23 +233,10 @@ export const TOOLS: Tool[] = [
   },
   {
     name: "change_setting",
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-    description: "Change a setting",
-    parameters: [
-      { name: "setting", type: "string", description: "theme", required: true },
-      { name: "value", type: "string", description: "Value", required: true },
-=======
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
     description: "Change an application setting",
     parameters: [
       { name: "setting", type: "string", description: "Setting name: theme (dark/light/cyberpunk/sakura/forest/ocean)", required: true },
       { name: "value", type: "string", description: "New value for the setting", required: true },
->>>>>>> Stashed changes
     ],
     execute: async ({ setting, value }) => {
       const s = setting.toLowerCase();
@@ -341,27 +259,12 @@ export const TOOLS: Tool[] = [
   },
   {
     name: "generate_and_create_draft",
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-    description: "Generate draft from job description",
-    parameters: [
-      { name: "jobDescription", type: "string", description: "Job description text", required: true },
-      { name: "recipientEmail", type: "string", description: "To", required: true },
-      { name: "companyName", type: "string", description: "Company" },
-      { name: "hiringManager", type: "string", description: "Hiring manager" },
-=======
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
     description: "Parse a job description and create a complete outreach draft in one step",
     parameters: [
       { name: "jobDescription", type: "string", description: "The full job description text", required: true },
       { name: "recipientEmail", type: "string", description: "Recipient email address", required: true },
       { name: "companyName", type: "string", description: "Company name (optional)" },
       { name: "hiringManager", type: "string", description: "Hiring manager name (optional)" },
->>>>>>> Stashed changes
     ],
     execute: async ({ jobDescription, recipientEmail, companyName, hiringManager }) => {
       const title = extractJobTitle(jobDescription) || "[Job Title]";
@@ -385,6 +288,69 @@ export const TOOLS: Tool[] = [
       useEmailStore.getState().setCurrentFolder("draft");
       useEmailStore.getState().setSelectedEmailId(draft.id);
       return `Created outreach draft to ${recipientEmail} about ${companyName || "the position"}. Navigate to Drafts to review and send. Use update_draft if you need to make changes.`;
+    },
+  },
+  {
+    name: "create_rule",
+    description: "Create an automation rule that triggers actions when emails match conditions",
+    parameters: [
+      { name: "name", type: "string", description: "A short human-readable name for the rule", required: true },
+      { name: "field", type: "string", description: "Field to match: from, subject, body, to", required: true },
+      { name: "operator", type: "string", description: "Match type: contains, not_contains, equals, starts_with, ends_with, matches (regex)", required: true },
+      { name: "value", type: "string", description: "Value to match against", required: true },
+      { name: "actionType", type: "string", description: "Action: create_draft, mark_read, star, delete, send_notification", required: true },
+      { name: "actionParams", type: "string", description: "JSON string of action params, e.g. {\"to\":\"someone@email.com\",\"subject\":\"Auto reply\"}" },
+    ],
+    execute: async ({ name, field, operator, value, actionType, actionParams }) => {
+      const validFields = ["from", "subject", "body", "to"];
+      const validOps = ["contains", "not_contains", "equals", "starts_with", "ends_with", "matches"];
+      const validActions = ["create_draft", "mark_read", "star", "delete", "send_notification"];
+
+      if (!validFields.includes(field)) return `Error: invalid field "${field}". Use: ${validFields.join(", ")}`;
+      if (!validOps.includes(operator)) return `Error: invalid operator "${operator}". Use: ${validOps.join(", ")}`;
+      if (!validActions.includes(actionType)) return `Error: invalid action "${actionType}". Use: ${validActions.join(", ")}`;
+
+      let params: Record<string, string> = {};
+      if (actionParams) {
+        try { params = JSON.parse(actionParams); } catch { return `Error: actionParams must be valid JSON.`; }
+      }
+
+      const condition: RuleCondition = { field: field as RuleCondition["field"], operator: operator as RuleCondition["operator"], value };
+      const rule: Rule = {
+        id: `rule-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        name,
+        conditions: [condition],
+        logic: "all",
+        action: { type: actionType as Rule["action"]["type"], params },
+        enabled: true,
+        createdAt: new Date().toISOString(),
+        triggerCount: 0,
+      };
+
+      useRuleStore.getState().addRule(rule);
+      return `Rule "${name}" created: when [${field} ${operator} "${value}"] → [${actionType}]. It's now active and will trigger on matching incoming emails.`;
+    },
+  },
+  {
+    name: "list_rules",
+    description: "List all automation rules and their status",
+    parameters: [],
+    execute: async () => {
+      const rules = useRuleStore.getState().rules;
+      if (rules.length === 0) return "No rules configured. Use create_rule to set up automation.";
+      return rules.map((r) =>
+        `${r.enabled ? "✓" : "✗"} "${r.name}" — if [${r.conditions[0].field} ${r.conditions[0].operator} "${r.conditions[0].value}"] → [${r.action.type}] (triggered ${r.triggerCount}x)`
+      ).join("\n");
+    },
+  },
+  {
+    name: "run_rules",
+    description: "Manually run all enabled rules against current inbox emails",
+    parameters: [],
+    execute: async () => {
+      const triggered = evaluateAllRules();
+      if (triggered.length === 0) return "No rules were triggered. No matching emails found.";
+      return `Rules triggered: ${triggered.join(", ")}. Check your inbox/drafts for results.`;
     },
   },
 ];
@@ -415,5 +381,6 @@ export function parseToolCall(text: string): { toolName: string; args: Record<st
     }
   }
 
-  return null;
+  // NLP regex fallback for natural language commands
+  return parseNlpCommand(text);
 }

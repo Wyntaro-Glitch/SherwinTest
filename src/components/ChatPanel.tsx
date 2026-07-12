@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { useVoiceInput } from "@/hooks/useVoiceInput";
 
 // Response cache (60s TTL, exact text match only)
 const responseCache = new Map<string, { response: string; time: number }>();
@@ -132,12 +133,17 @@ export default function ChatPanel() {
     },
   ]);
   const [inputValue, setInputValue] = useState("");
+  const voice = useVoiceInput();
   const [isGenerating, setIsGenerating] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isGenerating]);
+
+  useEffect(() => {
+    if (voice.transcript) setInputValue((prev) => (prev ? prev + " " : "") + voice.transcript);
+  }, [voice.transcript]);
 
   const handleLoadModel = async () => {
     setIsInitializing(true);
@@ -601,6 +607,11 @@ export default function ChatPanel() {
           </div>
         )}
         <div className="relative flex items-center gap-2">
+          {voice.error && (
+            <div className="absolute -top-9 left-0 right-0 text-xs text-amber-400 bg-slate-900/90 border border-amber-500/20 rounded-lg px-3 py-1.5">
+              {voice.error}
+            </div>
+          )}
           <input
             type="file"
             ref={fileInputRef}
@@ -630,6 +641,26 @@ export default function ChatPanel() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
             </svg>
           </button>
+          {voice.isSupported && (
+            <button
+              onClick={voice.isListening ? voice.stopListening : voice.startListening}
+              disabled={isGenerating}
+              className={`p-2 rounded-xl transition-colors cursor-pointer shrink-0 ${
+                voice.isListening
+                  ? "bg-rose-500 text-white animate-pulse"
+                  : "bg-slate-800 hover:bg-slate-700 text-slate-400 disabled:opacity-50"
+              }`}
+              title={voice.isListening ? "Stop listening" : "Voice input"}
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                {voice.isListening ? (
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                ) : (
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                )}
+              </svg>
+            </button>
+          )}
           <input
             type="text"
             placeholder={

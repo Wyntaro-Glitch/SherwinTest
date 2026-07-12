@@ -2,8 +2,14 @@
 
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { encryptPassword } from "@/utils/encryption";
 
 type SmtpProvider = "protonmail" | "gmail" | "custom";
+
+interface SendResult {
+  ok: boolean;
+  error?: string;
+}
 
 interface SmtpStore {
   provider: SmtpProvider;
@@ -24,6 +30,7 @@ interface SmtpStore {
   setIsTestingConnection: (testing: boolean) => void;
   setTestResult: (result: "none" | "success" | "error", message?: string) => void;
   saveAndTest: () => void;
+  sendEmail: (to: string, subject: string, text: string) => Promise<SendResult>;
 }
 
 export const useSmtpStore = create<SmtpStore>()(
@@ -50,21 +57,14 @@ export const useSmtpStore = create<SmtpStore>()(
       setSmtpServer: (smtpServer) => set({ smtpServer }),
       setSmtpPort: (smtpPort) => set({ smtpPort }),
       setSmtpUser: (smtpUser) => set({ smtpUser }),
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
       setSmtpPassword: (smtpPassword) => {
         set({ smtpPassword });
+        encryptPassword(smtpPassword)
+          .then((encrypted) => {
+            localStorage.setItem("sherwin_smtp_encrypted", encrypted);
+          })
+          .catch((e) => console.error("Failed to encrypt SMTP password:", e));
       },
-=======
-      setSmtpPassword: (smtpPassword) => set({ smtpPassword }),
->>>>>>> Stashed changes
-=======
-      setSmtpPassword: (smtpPassword) => set({ smtpPassword }),
->>>>>>> Stashed changes
-=======
-      setSmtpPassword: (smtpPassword) => set({ smtpPassword }),
->>>>>>> Stashed changes
       setIsTestingConnection: (isTestingConnection) => set({ isTestingConnection }),
       setTestResult: (testResult, testMessage = "") => set({ testResult, testMessage }),
 
@@ -72,19 +72,56 @@ export const useSmtpStore = create<SmtpStore>()(
         const state = get();
         set({ isTestingConnection: true, testResult: "none", testMessage: "" });
 
-        setTimeout(() => {
-          if (!state.emailAddress.trim() || !state.emailAddress.includes("@")) {
-            set({ testResult: "error", testMessage: "Please enter a valid email address.", isTestingConnection: false });
-            return;
+        if (!state.emailAddress.trim() || !state.emailAddress.includes("@")) {
+          set({ testResult: "error", testMessage: "Please enter a valid email address.", isTestingConnection: false });
+          return;
+        }
+
+        get().sendEmail(
+          state.emailAddress,
+          "SherwinMail — Connection Test",
+          "This is a test email from SherwinMail. If you received this, your SMTP connection is working correctly."
+        ).then((result) => {
+          if (result.ok) {
+            set({
+              testResult: "success",
+              testMessage: `Successfully connected and sent test email via ${
+                state.provider === "protonmail" ? "ProtonMail Bridge" : state.provider === "gmail" ? "Gmail SMTP" : "Custom Server"
+              }!`,
+              isTestingConnection: false,
+            });
+          } else {
+            set({
+              testResult: "error",
+              testMessage: `Connection failed: ${result.error}`,
+              isTestingConnection: false,
+            });
           }
-          set({
-            testResult: "success",
-            testMessage: `Successfully connected and saved connection parameters for ${
-              state.provider === "protonmail" ? "ProtonMail Bridge" : state.provider === "gmail" ? "Gmail SMTP" : "Custom Server"
-            }!`,
-            isTestingConnection: false,
+        });
+      },
+
+      sendEmail: async (to, subject, text) => {
+        const state = get();
+        try {
+          const res = await fetch("/api/send", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              host: state.smtpServer,
+              port: state.smtpPort,
+              user: state.smtpUser || state.emailAddress,
+              pass: state.smtpPassword,
+              from: state.emailAddress,
+              to,
+              subject,
+              text,
+            }),
           });
-        }, 1200);
+          const data = await res.json();
+          return data as SendResult;
+        } catch (err) {
+          return { ok: false, error: err instanceof Error ? err.message : "Network error" };
+        }
       },
     }),
     {
