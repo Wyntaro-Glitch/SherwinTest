@@ -8,16 +8,14 @@ import { useSmtpStore } from "@/stores/smtpStore";
 import { useToastStore } from "@/stores/toastStore";
 import { useUserMemoryStore } from "@/stores/userMemoryStore";
 import { useTutorialStore } from "@/stores/tutorialStore";
+import { useTemplateStore } from "@/stores/templateStore";
+import { useUserProfileStore } from "@/stores/userProfileStore";
 import { PRESET_TIERS, getModelsByTier, getDefaultModelForTier } from "@/utils/aiService";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import MailSidebar from "@/components/MailSidebar";
-import MailList from "@/components/MailList";
-import MailDetail from "@/components/MailDetail";
 import PrivacyBanner from "@/components/PrivacyBanner";
 import ThemeProvider from "@/components/ThemeProvider";
-import ProviderSettings from "@/components/ProviderSettings";
-import AppearanceSettings from "@/components/AppearanceSettings";
 import ProviderSetupModal from "@/components/ProviderSetupModal";
 import ErrorModal from "@/components/ErrorModal";
 import ThemeBackground from "@/components/ThemeBackground";
@@ -30,6 +28,11 @@ const ResumeScanner = dynamic(() => import("@/components/ResumeScanner"), { ssr:
 const PrivacyDashboard = dynamic(() => import("@/components/PrivacyDashboard"), { ssr: false });
 const SystemTaskScheduler = dynamic(() => import("@/components/SystemTaskScheduler"), { ssr: false });
 const ErrorMonitor = dynamic(() => import("@/components/ErrorMonitor"), { ssr: false });
+const MailList = dynamic(() => import("@/components/MailList"), { ssr: false });
+const MailDetail = dynamic(() => import("@/components/MailDetail"), { ssr: false });
+const ProviderSettings = dynamic(() => import("@/components/ProviderSettings"), { ssr: false });
+const AppearanceSettings = dynamic(() => import("@/components/AppearanceSettings"), { ssr: false });
+const ModelManager = dynamic(() => import("@/components/ModelManager"), { ssr: false });
 
 export default function Home() {
   const {
@@ -59,18 +62,16 @@ export default function Home() {
   const [errorModal, setErrorModal] = useState<{ title: string; description: string; details?: string } | null>(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
-  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const undoTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    setIsOnline(navigator.onLine);
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
+    const updateOnline = () => setIsOnline(navigator.onLine);
+    updateOnline();
+    window.addEventListener("online", updateOnline);
+    window.addEventListener("offline", updateOnline);
     return () => {
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("online", updateOnline);
+      window.removeEventListener("offline", updateOnline);
     };
   }, []);
 
@@ -100,14 +101,6 @@ export default function Home() {
   const handleDashboardNavigate = (view: "inbox" | "chat" | "settings") => {
     setCurrentFolder(view);
     if (view !== "inbox") setSelectedEmailId(null);
-  };
-
-  const formatBytes = (bytes?: number) => {
-    if (bytes === undefined) return "N/A";
-    const gb = bytes / (1024 * 1024 * 1024);
-    if (gb >= 1) return `${gb.toFixed(2)} GB`;
-    const mb = bytes / (1024 * 1024);
-    return `${mb.toFixed(2)} MB`;
   };
 
   const selectedEmail = emails.find((e) => e.id === selectedEmailId) || null;
@@ -270,7 +263,7 @@ export default function Home() {
           <div className="flex-1 p-6 sm:p-8 overflow-y-auto flex flex-col gap-8">
             <div className="max-w-6xl w-full mx-auto flex flex-col gap-8">
               <ErrorBoundary label="Provider Settings">
-                <ProviderSettings />
+                <Suspense fallback={null}><ProviderSettings /></Suspense>
               </ErrorBoundary>
               <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col gap-6">
                 <div>
@@ -333,7 +326,9 @@ export default function Home() {
                   )}
                 </div>
               </div>
-              <AppearanceSettings />
+              <Suspense fallback={null}><AppearanceSettings /></Suspense>
+              <UserProfileSection />
+              <TemplateLibrarySection />
               <Suspense fallback={null}><ErrorMonitor /></Suspense>
               <Suspense fallback={null}><SystemTaskScheduler /></Suspense>
 
@@ -352,6 +347,9 @@ export default function Home() {
                   Replay Tutorial
                 </button>
               </div>
+
+              {/* Model Download Manager */}
+              <Suspense fallback={null}><ModelManager /></Suspense>
 
               {/* Model Recommendations */}
               <DynamicModelRecommendations />
@@ -436,20 +434,24 @@ export default function Home() {
         ) : (
           <>
           <ErrorBoundary label="MailList">
-            <MailList
-              folder={currentFolder}
-              emails={emails}
-              selectedEmailId={selectedEmailId}
-              onSelectEmail={selectEmail}
-            />
+            <Suspense fallback={<div className="w-80 bg-slate-950 border-r border-slate-900 flex items-center justify-center text-slate-500 text-xs">Loading mail...</div>}>
+              <MailList
+                folder={currentFolder}
+                emails={emails}
+                selectedEmailId={selectedEmailId}
+                onSelectEmail={selectEmail}
+              />
+            </Suspense>
           </ErrorBoundary>
           <ErrorBoundary label="MailDetail">
-            <MailDetail
-              email={selectedEmail}
-              onUpdateEmail={(updated) => updateEmail(updated.id, updated)}
-              onDeleteEmail={(id) => deleteEmail(id)}
-              onReply={(replyTo) => replyToEmail(replyTo)}
-            />
+            <Suspense fallback={<div className="flex-1 flex items-center justify-center text-slate-500 text-xs">Loading...</div>}>
+              <MailDetail
+                email={selectedEmail}
+                onUpdateEmail={(updated) => updateEmail(updated.id, updated)}
+                onDeleteEmail={(id) => deleteEmail(id)}
+                onReply={(replyTo) => replyToEmail(replyTo)}
+              />
+            </Suspense>
           </ErrorBoundary>
           </>
         )}
@@ -467,7 +469,7 @@ function UserMemoryList() {
   const { memories, deleteMemory } = useUserMemoryStore();
 
   if (memories.length === 0) {
-    return <p className="text-xs text-slate-500 italic">No memories yet. Click "Add Memory" to teach the AI about yourself.</p>;
+    return <p className="text-xs text-slate-500 italic">No memories yet. Click &quot;Add Memory&quot; to teach the AI about yourself.</p>;
   }
 
   const categories = [...new Set(memories.map((m) => m.category))] as Array<"personal" | "preference" | "context" | "fact">;
@@ -501,6 +503,174 @@ function UserMemoryList() {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function UserProfileSection() {
+  const { profile, loadProfile, saveProfile } = useUserProfileStore();
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [title, setTitle] = useState("");
+  const [company, setCompany] = useState("");
+  const [skills, setSkills] = useState("");
+  const initializedRef = useRef(false);
+
+  useEffect(() => {
+    loadProfile();
+  }, [loadProfile]);
+
+  useEffect(() => {
+    if (profile && !initializedRef.current) {
+      initializedRef.current = true;
+      setName(profile.name);
+      setEmail(profile.email);
+      setTitle(profile.title);
+      setCompany(profile.company);
+      setSkills(profile.skills.join(", "));
+    }
+  }, [profile]);
+
+  const handleSave = async () => {
+    await saveProfile({
+      name,
+      email,
+      title,
+      company,
+      skills: skills.split(",").map((s) => s.trim()).filter(Boolean),
+    });
+    setEditing(false);
+    useToastStore.getState().addToast({ message: "Profile saved!", variant: "success" });
+  };
+
+  return (
+    <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col gap-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-base font-bold text-white mb-1">User Profile</h3>
+          <p className="text-xs text-slate-500">Your information used by AI for personalized drafts.</p>
+        </div>
+        <button onClick={() => setEditing(!editing)} className="py-1.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition-colors cursor-pointer">
+          {editing ? "Cancel" : "Edit Profile"}
+        </button>
+      </div>
+      {editing ? (
+        <div className="flex flex-col gap-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[10px] font-mono text-slate-500 uppercase font-semibold mb-1">Name</label>
+              <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="John Doe" className="w-full bg-slate-950 border border-slate-900 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none transition-colors" />
+            </div>
+            <div>
+              <label className="block text-[10px] font-mono text-slate-500 uppercase font-semibold mb-1">Email</label>
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="john@example.com" className="w-full bg-slate-950 border border-slate-900 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none transition-colors" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[10px] font-mono text-slate-500 uppercase font-semibold mb-1">Job Title</label>
+              <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Software Engineer" className="w-full bg-slate-950 border border-slate-900 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none transition-colors" />
+            </div>
+            <div>
+              <label className="block text-[10px] font-mono text-slate-500 uppercase font-semibold mb-1">Company</label>
+              <input type="text" value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Acme Corp" className="w-full bg-slate-950 border border-slate-900 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none transition-colors" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-[10px] font-mono text-slate-500 uppercase font-semibold mb-1">Skills (comma-separated)</label>
+            <input type="text" value={skills} onChange={(e) => setSkills(e.target.value)} placeholder="React, TypeScript, Next.js" className="w-full bg-slate-950 border border-slate-900 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none transition-colors" />
+          </div>
+          <button onClick={handleSave} className="py-2 px-4 bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer self-start">
+            Save Profile
+          </button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-3 text-xs">
+          <div className="bg-slate-950/40 border border-slate-900 rounded-xl p-3">
+            <p className="text-[10px] font-mono text-slate-500 uppercase">Name</p>
+            <p className="text-slate-200 font-semibold mt-0.5">{profile?.name || "Not set"}</p>
+          </div>
+          <div className="bg-slate-950/40 border border-slate-900 rounded-xl p-3">
+            <p className="text-[10px] font-mono text-slate-500 uppercase">Email</p>
+            <p className="text-slate-200 font-semibold mt-0.5">{profile?.email || "Not set"}</p>
+          </div>
+          <div className="bg-slate-950/40 border border-slate-900 rounded-xl p-3">
+            <p className="text-[10px] font-mono text-slate-500 uppercase">Title</p>
+            <p className="text-slate-200 font-semibold mt-0.5">{profile?.title || "Not set"}</p>
+          </div>
+          <div className="bg-slate-950/40 border border-slate-900 rounded-xl p-3">
+            <p className="text-[10px] font-mono text-slate-500 uppercase">Company</p>
+            <p className="text-slate-200 font-semibold mt-0.5">{profile?.company || "Not set"}</p>
+          </div>
+          {(profile?.skills?.length ?? 0) > 0 && (
+            <div className="col-span-2 bg-slate-950/40 border border-slate-900 rounded-xl p-3">
+              <p className="text-[10px] font-mono text-slate-500 uppercase mb-1">Skills</p>
+              <div className="flex flex-wrap gap-1">
+                {profile!.skills.map((skill, i) => (
+                  <span key={i} className="px-2 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-900/30 text-indigo-400 text-[10px] font-semibold">{skill}</span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TemplateLibrarySection() {
+  const { templates, loadTemplates, removeTemplate } = useTemplateStore();
+  const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
+
+  useEffect(() => {
+    loadTemplates();
+  }, [loadTemplates]);
+
+  const handleDelete = async (id: string, name: string) => {
+    if (confirm(`Delete template "${name}"?`)) {
+      await removeTemplate(id);
+      useToastStore.getState().addToast({ message: `Template "${name}" deleted`, variant: "info" });
+    }
+  };
+
+  const handleApplyTemplate = (tpl: { subject: string; body: string }) => {
+    navigator.clipboard.writeText(`Subject: ${tpl.subject}\n\n${tpl.body}`);
+    useToastStore.getState().addToast({ message: "Template copied to clipboard!", variant: "success" });
+  };
+
+  return (
+    <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col gap-4">
+      <div>
+        <h3 className="text-base font-bold text-white mb-1">Template Library</h3>
+        <p className="text-xs text-slate-500">Saved email templates for quick reuse. Create templates from the draft composer.</p>
+      </div>
+      {templates.length === 0 ? (
+        <div className="text-center py-6">
+          <p className="text-xs text-slate-500 italic">No templates saved yet.</p>
+          <p className="text-[10px] text-slate-600 mt-1">Use the bookmark icon in the draft composer to save templates.</p>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2 max-h-60 overflow-y-auto">
+          {templates.map((tpl) => (
+            <div key={tpl.id} className="bg-slate-950/40 border border-slate-900 rounded-xl p-3 flex items-center justify-between">
+              <div className="min-w-0 flex-1 cursor-pointer" onClick={() => setSelectedTemplate(selectedTemplate === tpl.id ? null : tpl.id)}>
+                <p className="text-xs font-semibold text-slate-200 truncate">{tpl.name}</p>
+                <p className="text-[10px] text-slate-500 truncate">{tpl.subject || tpl.body.slice(0, 80)}</p>
+                <p className="text-[8px] text-slate-600 font-mono mt-0.5">{tpl.category} | {new Date(tpl.updatedAt).toLocaleDateString()}</p>
+              </div>
+              <div className="flex gap-1 ml-2 shrink-0">
+                <button onClick={() => handleApplyTemplate(tpl)} className="p-1.5 hover:bg-slate-800 text-slate-500 hover:text-emerald-400 rounded-lg transition-colors cursor-pointer" title="Copy to clipboard">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" /></svg>
+                </button>
+                <button onClick={() => handleDelete(tpl.id, tpl.name)} className="p-1.5 hover:bg-slate-800 text-slate-500 hover:text-rose-400 rounded-lg transition-colors cursor-pointer" title="Delete template">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

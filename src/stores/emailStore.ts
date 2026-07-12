@@ -4,6 +4,13 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { Email, MailFolder } from "@/types";
 
+const DEFAULT_LABELS = [
+  { id: "label-important", name: "Important", color: "#f59e0b" },
+  { id: "label-work", name: "Work", color: "#3b82f6" },
+  { id: "label-personal", name: "Personal", color: "#10b981" },
+  { id: "label-followup", name: "Follow Up", color: "#ef4444" },
+];
+
 const DEFAULT_EMAILS: Email[] = [
   {
     id: "inbox-1",
@@ -63,6 +70,7 @@ interface EmailStore {
   selectedEmailId: string | null;
   undoStack: UndoEntry[];
   undoDescription: string | null;
+  labels: { id: string; name: string; color: string }[];
   addEmail: (email: Email) => void;
   updateEmail: (id: string, updates: Partial<Email>) => void;
   deleteEmail: (id: string) => void;
@@ -74,6 +82,27 @@ interface EmailStore {
   selectEmail: (id: string) => void;
   undoEmailAction: () => void;
   clearUndo: () => void;
+  addLabelToEmail: (emailId: string, labelId: string) => void;
+  removeLabelFromEmail: (emailId: string, labelId: string) => void;
+  addLabel: (name: string, color: string) => void;
+  removeLabel: (id: string) => void;
+}
+
+export function getThread(emailId: string): Email[] {
+  const state = useEmailStore.getState();
+  const email = state.emails.find((e) => e.id === emailId);
+  if (!email) return [];
+  const normalized = normalizeSubject(email.subject);
+  return state.emails
+    .filter((e) => normalizeSubject(e.subject) === normalized)
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+}
+
+export function normalizeSubject(subject: string): string {
+  return subject
+    .replace(/^(Re:\s*|Fwd:\s*|\[.*?\]\s*)*/i, "")
+    .replace(/\s*\(\d+\)\s*$/, "")
+    .trim();
 }
 
 export const useEmailStore = create<EmailStore>()(
@@ -84,6 +113,7 @@ export const useEmailStore = create<EmailStore>()(
       selectedEmailId: null,
       undoStack: [],
       undoDescription: null,
+      labels: DEFAULT_LABELS,
 
       addEmail: (email) =>
         set((s) => ({
@@ -183,10 +213,42 @@ export const useEmailStore = create<EmailStore>()(
         }),
 
       clearUndo: () => set({ undoDescription: null }),
+
+      addLabelToEmail: (emailId, labelId) =>
+        set((s) => ({
+          emails: s.emails.map((e) =>
+            e.id === emailId
+              ? { ...e, labels: [...new Set([...(e.labels || []), labelId])] }
+              : e
+          ),
+        })),
+
+      removeLabelFromEmail: (emailId, labelId) =>
+        set((s) => ({
+          emails: s.emails.map((e) =>
+            e.id === emailId
+              ? { ...e, labels: (e.labels || []).filter((l) => l !== labelId) }
+              : e
+          ),
+        })),
+
+      addLabel: (name, color) =>
+        set((s) => ({
+          labels: [...s.labels, { id: `label-${Date.now()}`, name, color }],
+        })),
+
+      removeLabel: (id) =>
+        set((s) => ({
+          labels: s.labels.filter((l) => l.id !== id),
+          emails: s.emails.map((e) => ({
+            ...e,
+            labels: (e.labels || []).filter((l) => l !== id),
+          })),
+        })),
     }),
     {
       name: "sherwin_emails",
-      partialize: (state) => ({ emails: state.emails }),
+      partialize: (state) => ({ emails: state.emails, labels: state.labels }),
     }
   )
 );
