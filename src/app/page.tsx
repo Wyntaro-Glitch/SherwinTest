@@ -100,6 +100,7 @@ export default function Home() {
     if (view !== "inbox") setSelectedEmailId(null);
   };
 
+<<<<<<< Updated upstream
   // Show provider setup modal on first visit (if no provider configured)
   useEffect(() => {
     const configured = localStorage.getItem("sherwin_ai_provider");
@@ -108,6 +109,8 @@ export default function Home() {
     }
   }, []);
 
+=======
+>>>>>>> Stashed changes
   const formatBytes = (bytes?: number) => {
     if (bytes === undefined) return "N/A";
     const gb = bytes / (1024 * 1024 * 1024);

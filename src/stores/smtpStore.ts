@@ -50,9 +50,13 @@ export const useSmtpStore = create<SmtpStore>()(
       setSmtpServer: (smtpServer) => set({ smtpServer }),
       setSmtpPort: (smtpPort) => set({ smtpPort }),
       setSmtpUser: (smtpUser) => set({ smtpUser }),
+<<<<<<< Updated upstream
       setSmtpPassword: (smtpPassword) => {
         set({ smtpPassword });
       },
+=======
+      setSmtpPassword: (smtpPassword) => set({ smtpPassword }),
+>>>>>>> Stashed changes
       setIsTestingConnection: (isTestingConnection) => set({ isTestingConnection }),
       setTestResult: (testResult, testMessage = "") => set({ testResult, testMessage }),
 
