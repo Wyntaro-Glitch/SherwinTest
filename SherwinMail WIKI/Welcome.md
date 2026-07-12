@@ -1754,8 +1754,25 @@ Extracted scattered `useState` patterns into persisted Zustand stores and implem
 - [x] **3. Create `utils/stateContext.ts`** for building the system prompt context
 - [x] **4. Modify `ChatPanel.tsx`** to detect and route tool calls
 - [ ] **5. Add `useVoiceInput` hook** for speech-to-text
-6. **Implement NLP command parser** as fallback for non-JSON models
-7. **Build the Rule Engine** for automated triggers
-8. **Add Local RAG** with `@xenova/transformers` for semantic search
-9. **Create agentic workflow loop** for multi-step tasks
-10. **Test with smaller models first** (Qwen 2.5 0.5B) before scaling up
+- [ ] **6. Implement NLP command parser** as fallback for non-JSON models
+- [ ] **7. Build the Rule Engine** for automated triggers
+- [ ] **8. Add Local RAG** with `@xenova/transformers` for semantic search
+- [ ] **9. Create agentic workflow loop** for multi-step tasks
+- [ ] **10. Test with smaller models first** (Qwen 2.5 0.5B) before scaling up
+
+---
+
+### PR 2 — Bug Fixes: Undefined References, Duplicate Keys, Dead Code (2026-07-12)
+
+Fixed 4 bugs that caused runtime errors or code quality issues:
+
+| Bug | File | Root Cause | Fix |
+|-----|------|------------|-----|
+| `encryptPassword()` undefined | `src/stores/smtpStore.ts:53-57` | Called a function that was never defined or imported — threw `ReferenceError` on every password save, silently caught by `.catch()` | Removed the broken `encryptPassword()` call entirely. Will be properly implemented in the encryption phase using Web Crypto API. |
+| `hasLoaded` undefined | `src/app/page.tsx:103-111` | Referenced in `useEffect` dependency array and condition, but never declared as state/ref — threw `ReferenceError` at runtime | Deleted the entire duplicate `useEffect` block. The `useState` lazy initializer on lines 51-56 already handles first-run provider setup detection. |
+| Duplicate `description`/`parameters` | `src/utils/tools.ts` (all 10 tools) | Every tool object had `description` and `parameters` written twice — second pair silently overwrote the first in JS object literals. Copy-paste artifact from when shorter stubs were replaced with detailed versions. | Removed the first (shorter) `description`/`parameters` pair on each tool, keeping only the second (better) version. Reduced file from 329 to 291 lines. |
+| Dead code after early return | `src/utils/stateContext.ts:28-59` | `buildAppContext()` had two `return` statements — the second block (lines 28-59) was unreachable dead code left over from a refactor | Deleted the unreachable second implementation block. Reduced file from 60 to 28 lines. |
+
+**Files changed:** `src/stores/smtpStore.ts`, `src/app/page.tsx`, `src/utils/tools.ts`, `src/utils/stateContext.ts`
+
+**Verification:** TypeScript compiles cleanly (`tsc --noEmit`). ESLint shows only pre-existing warnings unrelated to these changes.
