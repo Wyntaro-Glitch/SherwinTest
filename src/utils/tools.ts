@@ -7,6 +7,35 @@ import { parseNlpCommand } from "./nlpParser";
 import { evaluateAllRules } from "./ruleEngine";
 import { Rule, RuleCondition } from "@/types/rule";
 
+export interface ToolContext {
+  getEmails: () => Email[];
+  addEmail: (email: Email) => void;
+  updateEmail: (id: string, updates: Partial<Email>) => void;
+  deleteEmail: (id: string) => void;
+  setCurrentFolder: (folder: MailFolder) => void;
+  setSelectedEmailId: (id: string | null) => void;
+  getSmtp: () => { smtpServer: string; smtpPort: string; smtpUser: string; smtpPassword: string; emailAddress: string; provider: string };
+  getRules: () => Rule[];
+  addRule: (rule: Rule) => void;
+}
+
+export function createDefaultToolContext(): ToolContext {
+  return {
+    getEmails: () => useEmailStore.getState().emails,
+    addEmail: (email) => useEmailStore.getState().addEmail(email),
+    updateEmail: (id, updates) => useEmailStore.getState().updateEmail(id, updates),
+    deleteEmail: (id) => useEmailStore.getState().deleteEmail(id),
+    setCurrentFolder: (folder) => useEmailStore.getState().setCurrentFolder(folder),
+    setSelectedEmailId: (id) => useEmailStore.getState().setSelectedEmailId(id),
+    getSmtp: () => {
+      const s = useSmtpStore.getState();
+      return { smtpServer: s.smtpServer, smtpPort: s.smtpPort, smtpUser: s.smtpUser, smtpPassword: s.smtpPassword, emailAddress: s.emailAddress, provider: s.provider };
+    },
+    getRules: () => useRuleStore.getState().rules,
+    addRule: (rule) => useRuleStore.getState().addRule(rule),
+  };
+}
+
 export interface ToolParameter {
   name: string;
   type: string;
@@ -18,8 +47,7 @@ export interface Tool {
   name: string;
   description: string;
   parameters: ToolParameter[];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  execute: (args: Record<string, any>) => Promise<string>;
+  execute: (args: Record<string, string>, ctx: ToolContext) => Promise<string>;
 }
 
 function extractJobTitle(text: string): string | null {
@@ -36,7 +64,7 @@ export const TOOLS: Tool[] = [
       { name: "subject", type: "string", description: "Email subject line", required: true },
       { name: "body", type: "string", description: "Email body content", required: true },
     ],
-    execute: async ({ to, subject, body }) => {
+    execute: async ({ to, subject, body }, ctx) => {
       const draft: Email = {
         id: `draft-${Date.now()}`,
         subject, to, body,
@@ -45,9 +73,9 @@ export const TOOLS: Tool[] = [
         date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" }),
         isRead: true,
       };
-      useEmailStore.getState().addEmail(draft);
-      useEmailStore.getState().setCurrentFolder("draft");
-      useEmailStore.getState().setSelectedEmailId(draft.id);
+      ctx.addEmail(draft);
+      ctx.setCurrentFolder("draft");
+      ctx.setSelectedEmailId(draft.id);
       return `Created draft to ${to} with subject "${subject}". Navigated to Drafts folder.`;
     },
   },
@@ -58,8 +86,8 @@ export const TOOLS: Tool[] = [
       { name: "emailQuery", type: "string", description: "Search term to find the email (sender name, subject keyword, or partial match)", required: true },
       { name: "body", type: "string", description: "Reply body content", required: true },
     ],
-    execute: async ({ emailQuery, body }) => {
-      const emails = useEmailStore.getState().emails;
+    execute: async ({ emailQuery, body }, ctx) => {
+      const emails = ctx.getEmails();
       const query = emailQuery.toLowerCase();
       const original = emails.find(e =>
         e.from.toLowerCase().includes(query) ||
@@ -78,9 +106,9 @@ export const TOOLS: Tool[] = [
         date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" }),
         isRead: true,
       };
-      useEmailStore.getState().addEmail(reply);
-      useEmailStore.getState().setCurrentFolder("draft");
-      useEmailStore.getState().setSelectedEmailId(reply.id);
+      ctx.addEmail(reply);
+      ctx.setCurrentFolder("draft");
+      ctx.setSelectedEmailId(reply.id);
       return `Created reply to ${original.from} about "${original.subject}". Navigated to Drafts folder.`;
     },
   },
@@ -90,9 +118,9 @@ export const TOOLS: Tool[] = [
     parameters: [
       { name: "query", type: "string", description: "Search term to find the draft (subject keyword or recipient)", required: true },
     ],
-    execute: async ({ query }) => {
-      const emails = useEmailStore.getState().emails;
-      const smtp = useSmtpStore.getState();
+    execute: async ({ query }, ctx) => {
+      const emails = ctx.getEmails();
+      const smtp = ctx.getSmtp();
       const q = query.toLowerCase();
       const draft = emails.find(e => e.status === "draft" && (
         e.subject.toLowerCase().includes(q) ||
@@ -102,7 +130,7 @@ export const TOOLS: Tool[] = [
       if (!draft) return `Error: no draft found matching "${query}".`;
 
       const sentDate = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-      useEmailStore.getState().updateEmail(draft.id, { status: "sent", date: sentDate });
+      ctx.updateEmail(draft.id, { status: "sent", date: sentDate });
 
       if (smtp.smtpServer && smtp.emailAddress) {
         try {
@@ -137,13 +165,13 @@ export const TOOLS: Tool[] = [
     name: "navigate_to",
     description: "Navigate to a different folder or view in the application",
     parameters: [
-      { name: "folder", type: "string", description: "Target: inbox, draft, sent, chat, resume, settings, home", required: true },
+      { name: "folder", type: "string", description: "Target: inbox, draft, sent, chat, resume, settings, ai-models, home", required: true },
     ],
-    execute: async ({ folder }) => {
-      const validFolders: MailFolder[] = ["inbox", "draft", "sent", "chat", "resume", "settings", "home"];
+    execute: async ({ folder }, ctx) => {
+      const validFolders: MailFolder[] = ["inbox", "draft", "sent", "chat", "resume", "settings", "ai-models", "home"];
       const f = folder.toLowerCase() as MailFolder;
       if (!validFolders.includes(f)) return `Error: invalid folder "${folder}". Valid: ${validFolders.join(", ")}`;
-      useEmailStore.getState().setCurrentFolder(f);
+      ctx.setCurrentFolder(f);
       return `Navigated to ${f}.`;
     },
   },
@@ -153,8 +181,8 @@ export const TOOLS: Tool[] = [
     parameters: [
       { name: "query", type: "string", description: "Search keyword or phrase", required: true },
     ],
-    execute: async ({ query }) => {
-      const emails = useEmailStore.getState().emails;
+    execute: async ({ query }, ctx) => {
+      const emails = ctx.getEmails();
       const q = query.toLowerCase();
       const results = emails.filter(e =>
         e.subject.toLowerCase().includes(q) ||
@@ -171,18 +199,17 @@ export const TOOLS: Tool[] = [
     name: "get_app_state",
     description: "Get the current application state summary",
     parameters: [],
-    execute: async () => {
-      const state = useEmailStore.getState();
-      const smtp = useSmtpStore.getState();
-      const inboxUnread = state.emails.filter(e => e.status === "inbox" && !e.isRead).length;
-      const draftCount = state.emails.filter(e => e.status === "draft").length;
-      const sentCount = state.emails.filter(e => e.status === "sent").length;
+    execute: async (_, ctx) => {
+      const emails = ctx.getEmails();
+      const smtp = ctx.getSmtp();
+      const inboxUnread = emails.filter(e => e.status === "inbox" && !e.isRead).length;
+      const draftCount = emails.filter(e => e.status === "draft").length;
+      const sentCount = emails.filter(e => e.status === "sent").length;
       return [
-        `Current view: ${state.currentFolder}`,
-        `Inbox: ${state.emails.filter(e => e.status === "inbox").length} (${inboxUnread} unread)`,
+        `Inbox: ${emails.filter(e => e.status === "inbox").length} (${inboxUnread} unread)`,
         `Drafts: ${draftCount}`,
         `Sent: ${sentCount}`,
-        `Total emails: ${state.emails.length}`,
+        `Total emails: ${emails.length}`,
         `SMTP configured: ${smtp.emailAddress ? "yes (" + smtp.provider + ")" : "no"}`,
       ].join("\n");
     },
@@ -193,8 +220,8 @@ export const TOOLS: Tool[] = [
     parameters: [
       { name: "query", type: "string", description: "Search term to find the email to delete (subject, sender, or keyword)", required: true },
     ],
-    execute: async ({ query }) => {
-      const emails = useEmailStore.getState().emails;
+    execute: async ({ query }, ctx) => {
+      const emails = ctx.getEmails();
       const q = query.toLowerCase();
       const target = emails.find(e =>
         e.subject.toLowerCase().includes(q) ||
@@ -202,7 +229,7 @@ export const TOOLS: Tool[] = [
         e.body.toLowerCase().includes(q)
       );
       if (!target) return `Error: no email found matching "${query}".`;
-      useEmailStore.getState().deleteEmail(target.id);
+      ctx.deleteEmail(target.id);
       return `Deleted email "${target.subject || "(no subject)"}" from ${target.from}.`;
     },
   },
@@ -215,8 +242,8 @@ export const TOOLS: Tool[] = [
       { name: "subject", type: "string", description: "New subject line (optional)" },
       { name: "body", type: "string", description: "New body content (optional)" },
     ],
-    execute: async ({ query, ...fields }) => {
-      const emails = useEmailStore.getState().emails;
+    execute: async ({ query, ...fields }, ctx) => {
+      const emails = ctx.getEmails();
       const q = query.toLowerCase();
       const draft = emails.find(e => e.status === "draft" && (
         e.subject.toLowerCase().includes(q) || e.to.toLowerCase().includes(q)
@@ -226,7 +253,7 @@ export const TOOLS: Tool[] = [
       if (fields.to) updates.to = fields.to;
       if (fields.subject) updates.subject = fields.subject;
       if (fields.body) updates.body = fields.body;
-      useEmailStore.getState().updateEmail(draft.id, updates);
+      ctx.updateEmail(draft.id, updates);
       const changed = Object.keys(updates).join(", ");
       return `Updated draft "${draft.subject}": ${changed} changed.`;
     },
@@ -266,10 +293,10 @@ export const TOOLS: Tool[] = [
       { name: "companyName", type: "string", description: "Company name (optional)" },
       { name: "hiringManager", type: "string", description: "Hiring manager name (optional)" },
     ],
-    execute: async ({ jobDescription, recipientEmail, companyName, hiringManager }) => {
+    execute: async ({ jobDescription, recipientEmail, companyName, hiringManager }, ctx) => {
       const title = extractJobTitle(jobDescription) || "[Job Title]";
       const subject = `Application for ${companyName ? companyName + " - " : ""}${title} position`;
-      let body = aiService.generateDraftFromJob(jobDescription, subject);
+      let body = aiService.generateDraftFromJob(jobDescription);
 
       if (companyName) body = body.replace(/\[Company Name\]/g, companyName);
       if (hiringManager) body = body.replace(/\[Hiring Manager Name\]/g, hiringManager);
@@ -284,9 +311,9 @@ export const TOOLS: Tool[] = [
         date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" }),
         isRead: true,
       };
-      useEmailStore.getState().addEmail(draft);
-      useEmailStore.getState().setCurrentFolder("draft");
-      useEmailStore.getState().setSelectedEmailId(draft.id);
+      ctx.addEmail(draft);
+      ctx.setCurrentFolder("draft");
+      ctx.setSelectedEmailId(draft.id);
       return `Created outreach draft to ${recipientEmail} about ${companyName || "the position"}. Navigate to Drafts to review and send. Use update_draft if you need to make changes.`;
     },
   },
@@ -301,7 +328,7 @@ export const TOOLS: Tool[] = [
       { name: "actionType", type: "string", description: "Action: create_draft, mark_read, star, delete, send_notification", required: true },
       { name: "actionParams", type: "string", description: "JSON string of action params, e.g. {\"to\":\"someone@email.com\",\"subject\":\"Auto reply\"}" },
     ],
-    execute: async ({ name, field, operator, value, actionType, actionParams }) => {
+    execute: async ({ name, field, operator, value, actionType, actionParams }, ctx) => {
       const validFields = ["from", "subject", "body", "to"];
       const validOps = ["contains", "not_contains", "equals", "starts_with", "ends_with", "matches"];
       const validActions = ["create_draft", "mark_read", "star", "delete", "send_notification"];
@@ -327,7 +354,7 @@ export const TOOLS: Tool[] = [
         triggerCount: 0,
       };
 
-      useRuleStore.getState().addRule(rule);
+      ctx.addRule(rule);
       return `Rule "${name}" created: when [${field} ${operator} "${value}"] → [${actionType}]. It's now active and will trigger on matching incoming emails.`;
     },
   },
@@ -335,8 +362,8 @@ export const TOOLS: Tool[] = [
     name: "list_rules",
     description: "List all automation rules and their status",
     parameters: [],
-    execute: async () => {
-      const rules = useRuleStore.getState().rules;
+    execute: async (_, ctx) => {
+      const rules = ctx.getRules();
       if (rules.length === 0) return "No rules configured. Use create_rule to set up automation.";
       return rules.map((r) =>
         `${r.enabled ? "✓" : "✗"} "${r.name}" — if [${r.conditions[0].field} ${r.conditions[0].operator} "${r.conditions[0].value}"] → [${r.action.type}] (triggered ${r.triggerCount}x)`
@@ -359,8 +386,7 @@ export function getToolByName(name: string): Tool | undefined {
   return TOOLS.find((t) => t.name === name);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function parseToolCall(text: string): { toolName: string; args: Record<string, any> } | null {
+export function parseToolCall(text: string): { toolName: string; args: Record<string, unknown> } | null {
   // Try JSON format: {"tool": "tool_name", "args": {...}}
   const jsonMatch = text.match(/\{\s*"tool"\s*:\s*"([^"]+)"\s*,\s*"args"\s*:\s*(\{[\s\S]*?\})\s*\}/);
   if (jsonMatch) {

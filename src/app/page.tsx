@@ -1,14 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, Suspense } from "react";
+import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { detectWebGPUSupport } from "@/utils/webgpu";
+import { exportSettings, importSettings, downloadBlob } from "@/utils/settingsExport";
+import ModelRecommendations from "@/components/ModelRecommendations";
 import { useEmailStore } from "@/stores/emailStore";
 import { useSmtpStore } from "@/stores/smtpStore";
 import { useToastStore } from "@/stores/toastStore";
 import { useUserMemoryStore } from "@/stores/userMemoryStore";
 import { useTutorialStore } from "@/stores/tutorialStore";
-import { PRESET_TIERS, getModelsByTier, getDefaultModelForTier } from "@/utils/aiService";
+import { useTemplateStore } from "@/stores/templateStore";
+import { useUserProfileStore } from "@/stores/userProfileStore";
+import { useAuthStore } from "@/stores/authStore";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import MailSidebar from "@/components/MailSidebar";
@@ -30,14 +35,16 @@ const MailList = dynamic(() => import("@/components/MailList"), { ssr: false });
 const MailDetail = dynamic(() => import("@/components/MailDetail"), { ssr: false });
 const ProviderSettings = dynamic(() => import("@/components/ProviderSettings"), { ssr: false });
 const AppearanceSettings = dynamic(() => import("@/components/AppearanceSettings"), { ssr: false });
-const ModelManager = dynamic(() => import("@/components/ModelManager"), { ssr: false });
 
 export default function Home() {
+  const router = useRouter();
+  const currentUser = useAuthStore((s) => s.currentUser);
   const {
     emails,
     currentFolder,
     selectedEmailId,
     undoDescription,
+    isLoaded,
     setCurrentFolder,
     setSelectedEmailId,
     selectEmail,
@@ -47,6 +54,7 @@ export default function Home() {
     replyToEmail,
     undoEmailAction,
     clearUndo,
+    loadFromDB,
   } = useEmailStore();
 
   const smtp = useSmtpStore();
@@ -63,6 +71,16 @@ export default function Home() {
   const undoTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    loadFromDB();
+  }, [loadFromDB]);
+
+  useEffect(() => {
+    if (!currentUser) {
+      router.push("/login");
+    }
+  }, [currentUser, router]);
+
+  useEffect(() => {
     const updateOnline = () => setIsOnline(navigator.onLine);
     updateOnline();
     window.addEventListener("online", updateOnline);
@@ -71,6 +89,28 @@ export default function Home() {
       window.removeEventListener("online", updateOnline);
       window.removeEventListener("offline", updateOnline);
     };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const oauthSuccess = params.get("oauth_success");
+    const oauthState = params.get("oauth_state");
+    const oauthError = params.get("oauth_error");
+
+    if (oauthSuccess === "google" && oauthState) {
+      try {
+        const parsed = JSON.parse(atob(oauthState));
+        useSmtpStore.getState().connectOAuth(parsed);
+        window.history.replaceState({}, "", window.location.pathname);
+      } catch {
+        // invalid state — ignore
+      }
+    }
+
+    if (oauthError) {
+      window.history.replaceState({}, "", window.location.pathname);
+    }
   }, []);
 
   const runDiagnostics = useCallback(async () => {
@@ -94,19 +134,11 @@ export default function Home() {
       undoTimeoutRef.current = setTimeout(() => clearUndo(), 5000);
     }
     return () => { if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current); };
-  }, [undoDescription]);
+  }, [undoDescription, clearUndo]);
 
   const handleDashboardNavigate = (view: "inbox" | "chat" | "settings") => {
     setCurrentFolder(view);
     if (view !== "inbox") setSelectedEmailId(null);
-  };
-
-  const formatBytes = (bytes?: number) => {
-    if (bytes === undefined) return "N/A";
-    const gb = bytes / (1024 * 1024 * 1024);
-    if (gb >= 1) return `${gb.toFixed(2)} GB`;
-    const mb = bytes / (1024 * 1024);
-    return `${mb.toFixed(2)} MB`;
   };
 
   const selectedEmail = emails.find((e) => e.id === selectedEmailId) || null;
@@ -137,8 +169,24 @@ export default function Home() {
     "?": () => setShowShortcuts((p) => !p),
   });
 
+  if (!currentUser) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
   return (
     <ThemeProvider>
+      {!isLoaded && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950">
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+            <p className="text-sm text-slate-400">Loading SherwinMail...</p>
+          </div>
+        </div>
+      )}
       <ErrorBoundary label="ThemeBackground"><ThemeBackground /></ErrorBoundary>
       <Tutorial />
       <ProviderSetupModal
@@ -228,6 +276,15 @@ export default function Home() {
           <span className="text-[10px] font-mono text-slate-500 border border-slate-900 rounded-full px-3 py-0.5 bg-slate-900/50">
             Local Workspace Active
           </span>
+          <span className="text-[10px] font-semibold text-indigo-400">
+            Welcome, {currentUser.name}
+          </span>
+          <button
+            onClick={() => useAuthStore.getState().logout()}
+            className="text-[10px] font-semibold text-slate-500 hover:text-rose-400 transition-colors cursor-pointer"
+          >
+            Sign Out
+          </button>
         </div>
       </header>
 
@@ -265,12 +322,20 @@ export default function Home() {
               <ChatPanel />
             </Suspense>
           </ErrorBoundary>
+        ) : currentFolder === "ai-models" ? (
+          <div className="flex-1 p-6 sm:p-8 overflow-y-auto flex flex-col gap-8">
+            <div className="max-w-6xl w-full mx-auto flex flex-col gap-8">
+              <ErrorBoundary label="AI Provider">
+                <Suspense fallback={null}><ProviderSettings /></Suspense>
+              </ErrorBoundary>
+              <ErrorBoundary label="AI Model Recommendations">
+                <Suspense fallback={null}><ModelRecommendations /></Suspense>
+              </ErrorBoundary>
+            </div>
+          </div>
         ) : currentFolder === "settings" ? (
           <div className="flex-1 p-6 sm:p-8 overflow-y-auto flex flex-col gap-8">
             <div className="max-w-6xl w-full mx-auto flex flex-col gap-8">
-              <ErrorBoundary label="Provider Settings">
-                <Suspense fallback={null}><ProviderSettings /></Suspense>
-              </ErrorBoundary>
               <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col gap-6">
                 <div>
                   <h3 className="text-base font-bold text-white mb-1">Mail Provider Integration</h3>
@@ -287,37 +352,100 @@ export default function Home() {
                       ))}
                     </div>
                   </div>
-                  <div>
-                    <label className="block text-[10px] font-mono text-slate-500 uppercase font-semibold mb-1">Email Address</label>
-                    <input type="email" placeholder="user@protonmail.com" value={smtp.emailAddress} onChange={(e) => smtp.setEmailAddress(e.target.value)} className="w-full bg-slate-950 border border-slate-900 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none transition-colors" />
-                  </div>
-                  <div className="grid grid-cols-3 gap-3">
-                    <div className="col-span-2">
-                      <label className="block text-[10px] font-mono text-slate-500 uppercase font-semibold mb-1">SMTP Server</label>
-                      <input type="text" placeholder="127.0.0.1" value={smtp.smtpServer} onChange={(e) => smtp.setSmtpServer(e.target.value)} disabled={smtp.provider !== "custom"} className="w-full bg-slate-950 border border-slate-900 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none transition-colors disabled:opacity-50" />
+
+                  {smtp.connectedVia === "oauth" && smtp.oauth ? (
+                    <div className="bg-indigo-950/30 border border-indigo-900/50 rounded-xl p-4 flex flex-col gap-3">
+                      <div className="flex items-center gap-2">
+                        <svg className="w-5 h-5 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
+                        <span className="text-sm font-semibold text-indigo-300">Connected via Google OAuth</span>
+                      </div>
+                      <div className="text-xs text-slate-400">
+                        <span className="text-slate-500">Account:</span> {smtp.oauth.email}
+                        {smtp.oauth.name && <span className="text-slate-600"> ({smtp.oauth.name})</span>}
+                      </div>
+                      <button
+                        onClick={() => { smtp.disconnectOAuth(); }}
+                        className="self-start py-1.5 px-4 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-400 rounded-lg text-[11px] font-semibold transition-all cursor-pointer"
+                      >
+                        Disconnect
+                      </button>
                     </div>
-                    <div>
-                      <label className="block text-[10px] font-mono text-slate-500 uppercase font-semibold mb-1">SMTP Port</label>
-                      <input type="text" placeholder="1025" value={smtp.smtpPort} onChange={(e) => smtp.setSmtpPort(e.target.value)} disabled={smtp.provider !== "custom"} className="w-full bg-slate-950 border border-slate-900 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none transition-colors disabled:opacity-50" />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[10px] font-mono text-slate-500 uppercase font-semibold mb-1">Username</label>
-                      <input type="text" placeholder="Default is email" value={smtp.smtpUser} onChange={(e) => smtp.setSmtpUser(e.target.value)} className="w-full bg-slate-950 border border-slate-900 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none transition-colors" />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-mono text-slate-500 uppercase font-semibold mb-1">Password</label>
-                      <input type="password" placeholder="••••••••••••" value={smtp.smtpPassword} onChange={(e) => smtp.setSmtpPassword(e.target.value)} className="w-full bg-slate-950 border border-slate-900 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none transition-colors" />
-                    </div>
-                  </div>
-                  <div className="pt-2">
-                    <button onClick={() => smtp.saveAndTest()} disabled={smtp.isTestingConnection} className="w-full py-2.5 bg-gradient-to-tr from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700 text-white rounded-xl font-bold text-xs tracking-wider disabled:opacity-50 transition-all flex items-center justify-center gap-2 cursor-pointer">
-                      {smtp.isTestingConnection ? (
-                        <><div className="w-3.5 h-3.5 border-2 border-indigo-200 border-t-transparent rounded-full animate-spin"></div> Testing Mail Server...</>
-                      ) : "Save & Test Connection"}
-                    </button>
-                  </div>
+                  ) : (
+                    <>
+                      {smtp.provider === "gmail" && (
+                        <button
+                          onClick={async () => {
+                            try {
+                              const res = await fetch("/api/auth/google?check=1");
+                              const data = await res.json();
+                              if (data.configured) {
+                                window.location.href = "/api/auth/google";
+                              } else {
+                                useToastStore.getState().addToast({
+                                  message: "Google OAuth is not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to .env.local — see .env.example",
+                                  variant: "error",
+                                });
+                              }
+                            } catch {
+                              window.location.href = "/api/auth/google";
+                            }
+                          }}
+                          className="flex items-center gap-3 py-3 px-4 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl transition-all group w-full cursor-pointer"
+                        >
+                          <svg className="w-5 h-5" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+                          <div className="flex flex-col text-left">
+                            <span className="text-xs font-bold text-slate-700 group-hover:text-slate-900 transition-colors">Sign in with Google</span>
+                            <span className="text-[10px] text-slate-400">OAuth 2.0 — no password stored locally</span>
+                          </div>
+                        </button>
+                      )}
+
+                      {smtp.provider === "protonmail" && (
+                        <div className="bg-slate-950/60 border border-slate-900 rounded-xl p-4 flex flex-col gap-2">
+                          <div className="flex items-center gap-2">
+                            <svg className="w-4 h-4 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                            <span className="text-xs font-semibold text-slate-300">ProtonMail Bridge Required</span>
+                          </div>
+                          <p className="text-[11px] text-slate-500 leading-relaxed">
+                            Install ProtonMail Bridge, enable Bridge mode, and configure the IMAP/SMTP credentials below. Bridge runs locally at 127.0.0.1:1025.
+                          </p>
+                        </div>
+                      )}
+
+                      <div>
+                        <label className="block text-[10px] font-mono text-slate-500 uppercase font-semibold mb-1">Email Address</label>
+                        <input type="email" placeholder="user@protonmail.com" value={smtp.emailAddress} onChange={(e) => smtp.setEmailAddress(e.target.value)} className="w-full bg-slate-950 border border-slate-900 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none transition-colors" />
+                      </div>
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="col-span-2">
+                          <label className="block text-[10px] font-mono text-slate-500 uppercase font-semibold mb-1">SMTP Server</label>
+                          <input type="text" placeholder="127.0.0.1" value={smtp.smtpServer} onChange={(e) => smtp.setSmtpServer(e.target.value)} disabled={smtp.provider !== "custom"} className="w-full bg-slate-950 border border-slate-900 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none transition-colors disabled:opacity-50" />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-mono text-slate-500 uppercase font-semibold mb-1">SMTP Port</label>
+                          <input type="text" placeholder="1025" value={smtp.smtpPort} onChange={(e) => smtp.setSmtpPort(e.target.value)} disabled={smtp.provider !== "custom"} className="w-full bg-slate-950 border border-slate-900 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none transition-colors disabled:opacity-50" />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[10px] font-mono text-slate-500 uppercase font-semibold mb-1">Username</label>
+                          <input type="text" placeholder="Default is email" value={smtp.smtpUser} onChange={(e) => smtp.setSmtpUser(e.target.value)} className="w-full bg-slate-950 border border-slate-900 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none transition-colors" />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-mono text-slate-500 uppercase font-semibold mb-1">Password</label>
+                          <input type="password" placeholder="••••••••••••" value={smtp.smtpPassword} onChange={(e) => smtp.setSmtpPassword(e.target.value)} className="w-full bg-slate-950 border border-slate-900 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none transition-colors" />
+                        </div>
+                      </div>
+                      <div className="pt-2">
+                        <button onClick={() => smtp.saveAndTest()} disabled={smtp.isTestingConnection} className="w-full py-2.5 bg-gradient-to-tr from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700 text-white rounded-xl font-bold text-xs tracking-wider disabled:opacity-50 transition-all flex items-center justify-center gap-2 cursor-pointer">
+                          {smtp.isTestingConnection ? (
+                            <><div className="w-3.5 h-3.5 border-2 border-indigo-200 border-t-transparent rounded-full animate-spin"></div> Testing Mail Server...</>
+                          ) : "Save & Test Connection"}
+                        </button>
+                      </div>
+                    </>
+                  )}
+
                   {smtp.testResult !== "none" && (
                     <div className={`p-3 rounded-xl border text-xs leading-relaxed ${smtp.testResult === "success" ? "bg-emerald-950/20 border-emerald-900/50 text-emerald-400" : "bg-rose-950/20 border-rose-900/50 text-rose-400"}`}>
                       <div className="flex items-center gap-2">
@@ -332,11 +460,11 @@ export default function Home() {
                   )}
                 </div>
               </div>
-              <Suspense fallback={null}><AppearanceSettings /></Suspense>
-              <UserProfileSection />
-              <TemplateLibrarySection />
-              <Suspense fallback={null}><ErrorMonitor /></Suspense>
-              <Suspense fallback={null}><SystemTaskScheduler /></Suspense>
+              <ErrorBoundary label="Appearance Settings"><Suspense fallback={null}><AppearanceSettings /></Suspense></ErrorBoundary>
+              <ErrorBoundary label="User Profile"><UserProfileSection /></ErrorBoundary>
+              <ErrorBoundary label="Template Library"><TemplateLibrarySection /></ErrorBoundary>
+              <ErrorBoundary label="Error Monitor"><Suspense fallback={null}><ErrorMonitor /></Suspense></ErrorBoundary>
+              <ErrorBoundary label="Task Scheduler"><Suspense fallback={null}><SystemTaskScheduler /></Suspense></ErrorBoundary>
 
               {/* Replay Tutorial */}
               <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-xl flex items-center justify-between">
@@ -354,8 +482,7 @@ export default function Home() {
                 </button>
               </div>
 
-              {/* Model Recommendations */}
-              <DynamicModelRecommendations />
+
 
               {/* User Memory Management */}
               <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col gap-4">
@@ -396,6 +523,46 @@ export default function Home() {
                   </div>
                 </div>
                 <UserMemoryList />
+              </div>
+
+              {/* Import / Export Settings */}
+              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col gap-4">
+                <div>
+                  <h3 className="text-base font-bold text-white mb-1">Backup & Restore</h3>
+                  <p className="text-xs text-slate-500">Export or import your settings, templates, emails, and rules.</p>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    onClick={async () => {
+                      try {
+                        const blob = await exportSettings();
+                        downloadBlob(blob, `sherwinmail-backup-${new Date().toISOString().slice(0, 10)}.json`);
+                        useToastStore.getState().addToast({ message: "Settings exported", variant: "success" });
+                      } catch (e) {
+                        useToastStore.getState().addToast({ message: `Export failed: ${e instanceof Error ? e.message : "Unknown error"}`, variant: "error" });
+                      }
+                    }}
+                    className="py-2 px-4 bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-400 border border-indigo-900/30 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                  >
+                    Export Settings
+                  </button>
+                  <label className="py-2 px-4 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-xl text-xs font-bold transition-colors cursor-pointer">
+                    Import Settings
+                    <input
+                      type="file"
+                      accept=".json"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const result = await importSettings(file);
+                        useToastStore.getState().addToast({ message: result.message, variant: result.success ? "success" : "error" });
+                        if (result.success) setTimeout(() => window.location.reload(), 1500);
+                      }}
+                    />
+                  </label>
+                </div>
+                <p className="text-[10px] text-slate-600">SMTP passwords are excluded from exports for security.</p>
               </div>
 
               {/* Reset Settings */}
@@ -674,61 +841,6 @@ function TemplateLibrarySection() {
           ))}
         </div>
       )}
-    </div>
-  );
-}
-
-function DynamicModelRecommendations() {
-  return (
-    <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col gap-4">
-      <div>
-        <h3 className="text-base font-bold text-white mb-1">Model Recommendations</h3>
-        <p className="text-xs text-slate-500">Choose the tier that matches your GPU VRAM. Vision models can read images &amp; PDFs.</p>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        {PRESET_TIERS.map((preset) => {
-          const models = getModelsByTier(preset.tier);
-          const visionModels = models.filter((m) => m.category === "vision");
-          return (
-            <div key={preset.tier} className="bg-slate-950/60 border border-slate-900 rounded-xl p-4 flex flex-col gap-2">
-              <div className="flex items-center gap-2">
-                <span className="text-lg">{preset.icon}</span>
-                <span className="text-xs font-bold text-slate-200">{preset.label}</span>
-                <span className="text-[9px] font-mono text-slate-500">{preset.minVram}+ VRAM</span>
-              </div>
-              <p className="text-[10px] text-slate-500">{preset.description}</p>
-              <div className="flex flex-col gap-1 mt-1">
-                <p className="text-[10px] font-semibold text-slate-300">Default: {getDefaultModelForTier(preset.tier).name}</p>
-                <div className="flex flex-wrap gap-1">
-                  {models.map((m) => (
-                    <span
-                      key={m.id}
-                      className={`text-[8px] px-1.5 py-0.5 rounded-full border ${
-                        m.category === "vision"
-                          ? "border-emerald-800/50 text-emerald-400 bg-emerald-950/20"
-                          : "border-slate-800 text-slate-400 bg-slate-950"
-                      }`}
-                    >
-                      {m.name}{m.category === "vision" ? " 📷" : ""}
-                    </span>
-                  ))}
-                </div>
-              </div>
-              {visionModels.length > 0 && (
-                <p className="text-[9px] text-emerald-400/80 mt-1">
-                  📷 Vision-capable — can read images &amp; PDFs
-                </p>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="text-[10px] text-slate-500 bg-slate-950/40 p-3 rounded-xl border border-slate-900">
-        <p className="font-semibold text-slate-400 mb-1">🔍 How this helps:</p>
-        <p>Models tagged with <span className="text-emerald-400">📷</span> can analyze images, screenshots, and PDF content directly. Pick a tier matching your VRAM for best performance. Low-spec models work on integrated GPUs; high-spec delivers maximum quality.</p>
-      </div>
     </div>
   );
 }

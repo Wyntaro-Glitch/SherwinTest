@@ -1,8 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { AIProviderConfig, AIProviderType } from "@/types";
-import { getProviderConfig, setProviderConfig, checkProvider, autoDetectProvider, ProviderCapabilities } from "@/utils/aiProvider";
+import {
+  getProviderConfig,
+  setProviderConfig,
+  checkProvider,
+  autoDetectProvider,
+  ProviderCapabilities,
+  VISION_MODEL_PRESETS,
+  matchPresetToInstalled,
+} from "@/utils/aiProvider";
 import { getModelsByCategory } from "@/utils/aiService";
 
 export default function ProviderSettings() {
@@ -14,12 +22,16 @@ export default function ProviderSettings() {
   const [apiKey, setApiKey] = useState(() => getProviderConfig().apiKey || "");
   const [baseUrl, setBaseUrl] = useState(() => getProviderConfig().baseUrl || "");
   const [pendingModel, setPendingModel] = useState(() => getProviderConfig().model);
+  const [ollamaInstalledModels, setOllamaInstalledModels] = useState<string[]>([]);
+  const [lmStudioInstalledModels, setLmStudioInstalledModels] = useState<string[]>([]);
 
-  const update = (partial: Partial<AIProviderConfig>) => {
-    const next = { ...config, ...partial };
-    setConfig(next);
-    setProviderConfig(next);
-  };
+  const update = useCallback((partial: Partial<AIProviderConfig>) => {
+    setConfig((prev) => {
+      const next = { ...prev, ...partial };
+      setProviderConfig(next);
+      return next;
+    });
+  }, []);
 
   const handleAutoDetect = async () => {
     setChecking(true);
@@ -34,8 +46,14 @@ export default function ProviderSettings() {
   const handleCheckProvider = async (provider: AIProviderType) => {
     setChecking(true);
     const result = await checkProvider(provider);
-    if (provider === "ollama") setOllamaStatus(result);
-    if (provider === "lmstudio") setLmStudioStatus(result);
+    if (provider === "ollama") {
+      setOllamaStatus(result);
+      setOllamaInstalledModels(result.models);
+    }
+    if (provider === "lmstudio") {
+      setLmStudioStatus(result);
+      setLmStudioInstalledModels(result.models);
+    }
     if (provider === "webgpu") setWebgpuStatus(result);
     if (result.available && result.models.length > 0) {
       if (provider === "webgpu") {
@@ -43,11 +61,69 @@ export default function ProviderSettings() {
         setPendingModel(savedModel);
         update({ provider });
       } else {
-        update({ provider, model: result.models[0], ollamaModel: provider === "ollama" ? result.models[0] : undefined, lmStudioModel: provider === "lmstudio" ? result.models[0] : undefined });
+        update({
+          provider,
+          model: result.models[0],
+          ollamaModel: provider === "ollama" ? result.models[0] : undefined,
+          lmStudioModel: provider === "lmstudio" ? result.models[0] : undefined,
+        });
       }
     }
     setChecking(false);
   };
+
+  const handleSelectPreset = useCallback(
+    (presetIndex: number, provider: "ollama" | "lmstudio") => {
+      const preset = VISION_MODEL_PRESETS[presetIndex];
+      const installed = provider === "ollama" ? ollamaInstalledModels : lmStudioInstalledModels;
+      const { matched, matchedModel } = matchPresetToInstalled(preset, installed, provider);
+
+      const modelToUse = matched ? matchedModel! : (provider === "ollama" ? preset.ollamaModels[0] : preset.lmStudioModels[0]);
+
+      update({
+        provider,
+        model: modelToUse,
+        ollamaModel: provider === "ollama" ? modelToUse : undefined,
+        lmStudioModel: provider === "lmstudio" ? modelToUse : undefined,
+      });
+    },
+    [ollamaInstalledModels, lmStudioInstalledModels, update]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    async function check() {
+      const provider = config.provider;
+      const result = await checkProvider(provider);
+      if (cancelled) return;
+      setChecking(false);
+      if (provider === "ollama") {
+        setOllamaStatus(result);
+        setOllamaInstalledModels(result.models);
+      }
+      if (provider === "lmstudio") {
+        setLmStudioStatus(result);
+        setLmStudioInstalledModels(result.models);
+      }
+      if (provider === "webgpu") setWebgpuStatus(result);
+      if (result.available && result.models.length > 0) {
+        if (provider === "webgpu") {
+          setPendingModel(config.model || result.models[0]);
+          update({ provider });
+        } else {
+          update({
+            provider,
+            model: result.models[0],
+            ollamaModel: provider === "ollama" ? result.models[0] : undefined,
+            lmStudioModel: provider === "lmstudio" ? result.models[0] : undefined,
+          });
+        }
+      }
+    }
+    check();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const PROVIDERS: { id: AIProviderType; label: string; desc: string; status: ProviderCapabilities | null }[] = [
     { id: "ollama", label: "Ollama", desc: "Local Ollama (localhost:11434)", status: ollamaStatus },
@@ -56,12 +132,27 @@ export default function ProviderSettings() {
     { id: "api", label: "API Key", desc: "Remote LLM provider", status: null },
   ];
 
+  const installedModels = config.provider === "ollama" ? ollamaInstalledModels : lmStudioInstalledModels;
+
+  const parseVramGB = (vram: string): number => {
+    const match = vram.match(/([\d.]+)/);
+    return match ? parseFloat(match[1]) : 0;
+  };
+
+  const getVramWarning = (vramRequired: string): { level: "none" | "low" | "medium" | "high"; message: string } => {
+    const gb = parseVramGB(vramRequired);
+    if (gb <= 2) return { level: "none", message: "" };
+    if (gb <= 3.5) return { level: "low", message: `Needs ~${vramRequired} VRAM. Works on most dedicated GPUs.` };
+    if (gb <= 5) return { level: "medium", message: `Needs ~${vramRequired} VRAM. Requires a dedicated GPU (GTX 1060+ / M1+).` };
+    return { level: "high", message: `Needs ~${vramRequired} VRAM. Requires a high-end GPU (RTX 3080+ / M1 Pro+). May fail on integrated graphics.` };
+  };
+
   return (
     <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col gap-5">
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-base font-bold text-white mb-1">AI Provider</h3>
-          <p className="text-xs text-slate-500">Choose how to run AI inference.</p>
+          <p className="text-xs text-slate-500">Choose how to run AI inference. All local presets support images &amp; PDFs.</p>
         </div>
         <button
           onClick={handleAutoDetect}
@@ -113,6 +204,91 @@ export default function ProviderSettings() {
         })}
       </div>
 
+      {/* Ollama / LM Studio Vision Presets */}
+      {(config.provider === "ollama" || config.provider === "lmstudio") && (
+        <div className="flex flex-col gap-3 bg-slate-950/40 p-4 rounded-xl border border-slate-900">
+          <div className="flex items-center justify-between">
+            <label className="text-[10px] font-mono text-slate-500 uppercase font-semibold">
+              Vision Model Preset — {config.provider === "ollama" ? "Ollama" : "LM Studio"}
+            </label>
+            {installedModels.length > 0 && (
+              <span className="text-[9px] text-emerald-400">{installedModels.length} model{installedModels.length !== 1 ? "s" : ""} detected</span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {VISION_MODEL_PRESETS.map((preset, i) => {
+              const { matched, matchedModel } = matchPresetToInstalled(preset, installedModels, config.provider as "ollama" | "lmstudio");
+              const isSelected = config.model === (matchedModel || (config.provider === "ollama" ? preset.ollamaModels[0] : preset.lmStudioModels[0]));
+
+              return (
+                <button
+                  key={preset.tier}
+                  onClick={() => handleSelectPreset(i, config.provider as "ollama" | "lmstudio")}
+                  disabled={checking}
+                  className={`flex flex-col gap-2 p-4 rounded-xl border text-left transition-all cursor-pointer ${
+                    isSelected
+                      ? "bg-indigo-500/10 border-indigo-500 ring-1 ring-indigo-500"
+                      : "bg-slate-950/60 border-slate-900 hover:border-slate-700"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-lg">{preset.icon}</span>
+                    {matched ? (
+                      <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-800/50 text-emerald-400 font-bold">
+                        Installed
+                      </span>
+                    ) : (
+                      <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-500">
+                        Not found
+                      </span>
+                    )}
+                  </div>
+                  <div>
+                    <p className={`text-xs font-bold ${isSelected ? "text-indigo-400" : "text-slate-200"}`}>
+                      {preset.label}
+                    </p>
+                    <p className="text-[9px] text-slate-500 mt-0.5">{preset.vramRequired} VRAM</p>
+                  </div>
+                  <p className="text-[9px] text-slate-500 leading-relaxed">{preset.description}</p>
+                  {matched && matchedModel && (
+                    <p className="text-[8px] text-emerald-400/80 font-mono truncate">{matchedModel}</p>
+                  )}
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {preset.capabilities.map((cap) => (
+                      <span key={cap} className="text-[7px] px-1.5 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-slate-400">
+                        {cap}
+                      </span>
+                    ))}
+                  </div>
+                  {(() => {
+                    const warning = getVramWarning(preset.vramRequired);
+                    if (warning.level === "none") return null;
+                    const dotColor = warning.level === "high" ? "bg-rose-500" : "bg-amber-500";
+                    return (
+                      <div className="flex items-start gap-1.5 mt-1">
+                        <span className={`w-1.5 h-1.5 rounded-full mt-0.5 shrink-0 ${dotColor}`} />
+                        <p className="text-[8px] text-slate-500 leading-relaxed">{warning.message}</p>
+                      </div>
+                    );
+                  })()}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="text-[9px] text-slate-600 leading-relaxed">
+            <p>All presets include <span className="text-amber-400/80">vision capabilities</span> for reading images &amp; PDFs.</p>
+            <p className="mt-0.5">
+              {installedModels.length === 0
+                ? "No models detected. Start your server and pull a model first."
+                : `Your installed models: ${installedModels.slice(0, 5).join(", ")}${installedModels.length > 5 ? ` +${installedModels.length - 5} more` : ""}`}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* WebGPU Model Selector */}
       {config.provider === "webgpu" && (
         <div className="flex flex-col gap-3 bg-slate-950/40 p-4 rounded-xl border border-slate-900">
           <div className="flex items-center justify-between">
@@ -173,11 +349,30 @@ export default function ProviderSettings() {
             {getModelsByCategory("text-smart")[0] && (
               <p className="text-indigo-400/80">▸ Best text-only: <span className="text-slate-400">{getModelsByCategory("text-smart")[0].name}</span> — great for drafting &amp; analysis (3.5+ GB VRAM)</p>
             )}
-            <p className="text-slate-600">▸ Need less VRAM? Pick a <span className="text-slate-500">Fast</span> model for quick responses.</p>
           </div>
+          {(() => {
+            const selectedModel = getModelsByCategory("text-fast")
+              .concat(getModelsByCategory("text-smart"), getModelsByCategory("text-powerful"), getModelsByCategory("vision"))
+              .find((m) => m.id === pendingModel);
+            if (!selectedModel) return null;
+            const warning = getVramWarning(selectedModel.vramRequired);
+            if (warning.level === "none") return null;
+            const colors = {
+              low: "bg-slate-800/50 border-slate-700 text-slate-400",
+              medium: "bg-amber-950/30 border-amber-900/50 text-amber-400",
+              high: "bg-rose-950/30 border-rose-900/50 text-rose-400",
+            };
+            return (
+              <div className={`mt-2 p-2.5 rounded-lg border text-[10px] leading-relaxed ${colors[warning.level]}`}>
+                {warning.level === "high" && <span className="font-bold">⚠ </span>}
+                {warning.message}
+              </div>
+            );
+          })()}
         </div>
       )}
 
+      {/* API Key Config */}
       {config.provider === "api" && (
         <div className="flex flex-col gap-3 bg-slate-950/40 p-4 rounded-xl border border-slate-900">
           <div>

@@ -22,7 +22,7 @@ interface MailDetailProps {
 }
 
 function scanBrackets(text: string): string[] {
-  const matches = text.match(/\[([^\]]+)\]/g);
+  const matches = (text || "").match(/\[([^\]]+)\]/g);
   return matches ? [...new Set(matches.map((m) => m.slice(1, -1)))] : [];
 }
 
@@ -42,7 +42,6 @@ const MailDetail = memo(function MailDetail({
   const [showBracketWarning, setShowBracketWarning] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
   const [showLabelPicker, setShowLabelPicker] = useState(false);
-  const [selectedLabelId, setSelectedLabelId] = useState<string | null>(null);
   const [isUploadingJD, setIsUploadingJD] = useState(false);
   const jdFileRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -68,13 +67,13 @@ const MailDetail = memo(function MailDetail({
 
   useEffect(() => {
     if (email && email.status === "draft") {
-      setTo(email.to);
-      setSubject(email.subject);
-      setBody(email.body);
-      originalBodyRef.current = email.body;
+      setTo(email.to || "");
+      setSubject(email.subject || "");
+      setBody(email.body || "");
+      originalBodyRef.current = email.body || "";
       emailIdRef.current = email.id;
     }
-  }, [email?.id]);
+  }, [email]);
 
   // Draft auto-recovery: warn before navigating away with unsaved changes
   useEffect(() => {
@@ -143,7 +142,7 @@ const MailDetail = memo(function MailDetail({
         onUpdateEmail({ ...email, body: draft });
       } catch (e: unknown) {
         console.error("AI provider draft failed:", e);
-        const fallback = aiService.generateDraftFromJob(jobText, subject);
+        const fallback = aiService.generateDraftFromJob(jobText);
         setBody(fallback);
         onUpdateEmail({ ...email, body: fallback });
       } finally {
@@ -151,7 +150,7 @@ const MailDetail = memo(function MailDetail({
       }
     } else {
       setTimeout(() => {
-        const generatedBody = aiService.generateDraftFromJob(jobText, subject);
+        const generatedBody = aiService.generateDraftFromJob(jobText);
         setBody(generatedBody);
         onUpdateEmail({ ...email, body: generatedBody });
         setIsGenerating(false);
@@ -552,7 +551,7 @@ const MailDetail = memo(function MailDetail({
           )}
         </div>
         <div className="border-t border-slate-900"></div>
-        <div className="text-slate-300 text-sm leading-relaxed whitespace-pre-line font-sans">{email.body}</div>
+        <div className="text-slate-300 text-sm leading-relaxed whitespace-pre-line font-sans">{email.body || ""}</div>
       </div>
     </div>
   );

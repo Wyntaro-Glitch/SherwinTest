@@ -12,9 +12,9 @@ function getUA(): string {
 
 async function isBrave(): Promise<boolean> {
   try {
-    const brave = (navigator as any).brave;
-    if (brave && typeof brave.isBrave === "function") {
-      return await brave.isBrave();
+    const nav = navigator as unknown as { brave?: { isBrave: () => Promise<boolean> } };
+    if (nav.brave && typeof nav.brave.isBrave === "function") {
+      return await nav.brave.isBrave();
     }
   } catch {}
   return / braves/i.test(getUA()) || /brave browser/i.test(getUA());

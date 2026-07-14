@@ -27,7 +27,7 @@ export interface ChatMessage {
   timestamp: string;
 }
 
-export type MailFolder = "home" | "inbox" | "draft" | "sent" | "chat" | "settings" | "profile" | "resume";
+export type MailFolder = "home" | "inbox" | "draft" | "sent" | "chat" | "settings" | "profile" | "resume" | "ai-models";
 
 export type MessageContentPart =
   | { type: "text"; text: string }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTheme } from "@/components/ThemeProvider";
 
 const CYBERPUNK_CHARS = "アカサタナハマヤラワ0123456789$%#@!&*:;<>";
@@ -19,11 +19,6 @@ interface MatrixDrop {
   x: number; y: number; speed: number;
   length: number; chars: string[];
   opacity: number;
-}
-
-interface WaveParticle {
-  x: number; y: number; vx: number; vy: number;
-  size: number; opacity: number; life: number;
 }
 
 function drawSakuraPetal(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, rotation: number, color: string, opacity: number) {
@@ -132,7 +127,7 @@ function drawWave(ctx: CanvasRenderingContext2D, w: number, h: number, time: num
   for (let i = 0; i < 12; i++) {
     const fx = curlX + Math.sin(time * 0.5 + i * 1.7) * 18 * scale;
     const fy = curlY - 8 * scale + Math.cos(time * 0.7 + i * 2.3) * 12 * scale;
-    const fs = 1 + Math.sin(time + i) * 1.2;
+    const fs = Math.max(0.1, 1 + Math.sin(time + i) * 1.2);
     ctx.beginPath();
     ctx.arc(fx, fy, fs * scale, 0, Math.PI * 2);
     ctx.fill();
@@ -157,11 +152,16 @@ function drawWave(ctx: CanvasRenderingContext2D, w: number, h: number, time: num
 }
 
 export default function ThemeBackground() {
-  const { theme } = useTheme();
+  const { theme: rawTheme } = useTheme();
+  const [theme, setTheme] = useState<"dark" | "light" | "cyberpunk" | "sakura" | "forest" | "ocean">("dark");
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animRef = useRef<number>(0);
   const particlesRef = useRef<Particle[]>([]);
   const dropsRef = useRef<MatrixDrop[]>([]);
+
+  useEffect(() => {
+    setTheme(rawTheme);
+  }, [rawTheme]);
 
   useEffect(() => {
     const canvas = canvasRef.current;

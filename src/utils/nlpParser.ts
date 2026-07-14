@@ -1,6 +1,6 @@
 interface NlpResult {
   toolName: string;
-  args: Record<string, any>;
+  args: Record<string, string | number | boolean>;
 }
 
 const EMAIL_RE = /[\w.+-]+@[\w.-]+\.\w{2,}/g;
@@ -71,7 +71,7 @@ export function parseNlpCommand(text: string): NlpResult | null {
   if (/\b(update|edit|modify|change|revise)\b.*\b(draft|email|mail|message)\b/i.test(lower)) {
     const query = extractQuery(text) || text;
     const body = extractBody(text);
-    const args: Record<string, any> = { query };
+    const args: Record<string, string | number | boolean> = { query };
     if (body) args.body = body;
     return { toolName: "update_draft", args };
   }
@@ -89,7 +89,7 @@ export function parseNlpCommand(text: string): NlpResult | null {
     const to = extractEmail(text);
     const subject = extractSubject(text);
     const body = extractBody(text);
-    const args: Record<string, any> = {};
+    const args: Record<string, string | number | boolean> = {};
     if (to) args.to = to;
     if (subject) args.subject = subject;
     if (body) args.body = body;
@@ -126,7 +126,7 @@ export function parseNlpCommand(text: string): NlpResult | null {
   if (/\b(reply|respond|answer)\b.*\b(to|email|mail|message)\b/i.test(lower)) {
     const query = extractQuery(text) || text;
     const body = extractBody(text);
-    const args: Record<string, any> = { query };
+    const args: Record<string, string | number | boolean> = { query };
     if (body) args.body = body;
     return { toolName: "reply_email", args };
   }

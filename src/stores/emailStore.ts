@@ -1,8 +1,16 @@
 "use client";
 
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
 import { Email, MailFolder } from "@/types";
+import {
+  getAllEmails,
+  saveAllEmails,
+  saveEmail,
+  deleteEmailFromDB,
+  getAllLabels,
+  saveAllLabels,
+  migrateEmailsFromLocalStorage,
+} from "@/utils/db";
 
 const DEFAULT_LABELS = [
   { id: "label-important", name: "Important", color: "#f59e0b" },
@@ -71,6 +79,7 @@ interface EmailStore {
   undoStack: UndoEntry[];
   undoDescription: string | null;
   labels: { id: string; name: string; color: string }[];
+  isLoaded: boolean;
   addEmail: (email: Email) => void;
   updateEmail: (id: string, updates: Partial<Email>) => void;
   deleteEmail: (id: string) => void;
@@ -86,6 +95,7 @@ interface EmailStore {
   removeLabelFromEmail: (emailId: string, labelId: string) => void;
   addLabel: (name: string, color: string) => void;
   removeLabel: (id: string) => void;
+  loadFromDB: () => Promise<void>;
 }
 
 export function getThread(emailId: string): Email[] {
@@ -105,150 +115,186 @@ export function normalizeSubject(subject: string): string {
     .trim();
 }
 
-export const useEmailStore = create<EmailStore>()(
-  persist(
-    (set) => ({
-      emails: DEFAULT_EMAILS,
-      currentFolder: "home",
-      selectedEmailId: null,
-      undoStack: [],
-      undoDescription: null,
-      labels: DEFAULT_LABELS,
+let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 
-      addEmail: (email) =>
-        set((s) => ({
-          emails: [email, ...s.emails],
-          undoStack: [...s.undoStack, { emails: s.emails, description: `Add "${email.subject || "draft"}"` }].slice(-20),
-          undoDescription: `Add "${email.subject || "draft"}"`,
-        })),
+function debouncedSave(emails: Email[]) {
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => {
+    saveAllEmails(emails).catch((e) => console.error("Failed to save emails to IndexedDB:", e));
+  }, 300);
+}
 
-      updateEmail: (id, updates) =>
-        set((s) => {
-          const prev = s.emails.find((e) => e.id === id);
-          if (!prev) return {};
-          return {
-            emails: s.emails.map((e) => (e.id === id ? { ...e, ...updates } : e)),
-            undoStack: [...s.undoStack, { emails: s.emails, description: `Update "${prev.subject || "draft"}"` }].slice(-20),
-            undoDescription: `Update "${prev.subject || "draft"}"`,
-          };
-        }),
+export const useEmailStore = create<EmailStore>()((set, get) => ({
+  emails: DEFAULT_EMAILS,
+  currentFolder: "home",
+  selectedEmailId: null,
+  undoStack: [],
+  undoDescription: null,
+  labels: DEFAULT_LABELS,
+  isLoaded: false,
 
-      deleteEmail: (id) =>
-        set((s) => {
-          const prev = s.emails.find((e) => e.id === id);
-          return {
-            emails: s.emails.filter((e) => e.id !== id),
-            selectedEmailId: s.selectedEmailId === id ? null : s.selectedEmailId,
-            undoStack: [...s.undoStack, { emails: s.emails, description: `Delete "${prev?.subject || "email"}"` }].slice(-20),
-            undoDescription: `Delete "${prev?.subject || "email"}"`,
-          };
-        }),
-
-      setEmails: (emails) => set({ emails }),
-
-      setCurrentFolder: (folder) =>
-        set({ currentFolder: folder, selectedEmailId: null }),
-
-      setSelectedEmailId: (id) => set({ selectedEmailId: id }),
-
-      composeDraft: () =>
-        set((s) => {
-          const newDraft: Email = {
-            id: `draft-${Date.now()}`,
-            subject: "",
-            from: "you@sherwinmail.io",
-            to: "",
-            body: "",
-            status: "draft",
-            date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-            isRead: true,
-          };
-          return {
-            emails: [newDraft, ...s.emails],
-            currentFolder: "draft",
-            selectedEmailId: newDraft.id,
-            undoStack: [...s.undoStack, { emails: s.emails, description: "New draft" }].slice(-20),
-            undoDescription: "New draft",
-          };
-        }),
-
-      replyToEmail: (replyTo) =>
-        set((s) => {
-          const newDraft: Email = {
-            id: `draft-${Date.now()}`,
-            subject: replyTo.subject.startsWith("Re:") ? replyTo.subject : `Re: ${replyTo.subject}`,
-            from: "you@sherwinmail.io",
-            to: replyTo.from,
-            body: `\n\nOn ${replyTo.date}, ${replyTo.from} wrote:\n> ${replyTo.body.split("\n").join("\n> ")}`,
-            status: "draft",
-            date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-            isRead: true,
-          };
-          return {
-            emails: [newDraft, ...s.emails],
-            currentFolder: "draft",
-            selectedEmailId: newDraft.id,
-            undoStack: [...s.undoStack, { emails: s.emails, description: `Reply to "${replyTo.subject}"` }].slice(-20),
-            undoDescription: `Reply to "${replyTo.subject}"`,
-          };
-        }),
-
-      selectEmail: (id) =>
-        set((s) => ({
-          selectedEmailId: id,
-          emails: s.emails.map((e) =>
-            e.id === id ? { ...e, isRead: true } : e
-          ),
-        })),
-
-      undoEmailAction: () =>
-        set((s) => {
-          if (s.undoStack.length === 0) return {};
-          const prev = s.undoStack[s.undoStack.length - 1];
-          return {
-            emails: prev.emails,
-            undoStack: s.undoStack.slice(0, -1),
-            undoDescription: null,
-          };
-        }),
-
-      clearUndo: () => set({ undoDescription: null }),
-
-      addLabelToEmail: (emailId, labelId) =>
-        set((s) => ({
-          emails: s.emails.map((e) =>
-            e.id === emailId
-              ? { ...e, labels: [...new Set([...(e.labels || []), labelId])] }
-              : e
-          ),
-        })),
-
-      removeLabelFromEmail: (emailId, labelId) =>
-        set((s) => ({
-          emails: s.emails.map((e) =>
-            e.id === emailId
-              ? { ...e, labels: (e.labels || []).filter((l) => l !== labelId) }
-              : e
-          ),
-        })),
-
-      addLabel: (name, color) =>
-        set((s) => ({
-          labels: [...s.labels, { id: `label-${Date.now()}`, name, color }],
-        })),
-
-      removeLabel: (id) =>
-        set((s) => ({
-          labels: s.labels.filter((l) => l.id !== id),
-          emails: s.emails.map((e) => ({
-            ...e,
-            labels: (e.labels || []).filter((l) => l !== id),
-          })),
-        })),
-    }),
-    {
-      name: "sherwin_emails",
-      partialize: (state) => ({ emails: state.emails, labels: state.labels }),
+  loadFromDB: async () => {
+    try {
+      await migrateEmailsFromLocalStorage();
+      const [emails, labels] = await Promise.all([getAllEmails(), getAllLabels()]);
+      set({
+        emails: emails.length > 0 ? emails : DEFAULT_EMAILS,
+        labels: labels.length > 0 ? labels : DEFAULT_LABELS,
+        isLoaded: true,
+      });
+      if (emails.length === 0) {
+        await saveAllEmails(DEFAULT_EMAILS);
+        await saveAllLabels(DEFAULT_LABELS);
+      }
+    } catch (e) {
+      console.error("Failed to load from IndexedDB:", e);
+      set({ isLoaded: true });
     }
-  )
-);
+  },
+
+  addEmail: (email) => {
+    const newEmails = [email, ...get().emails];
+    set({
+      emails: newEmails,
+      undoStack: [...get().undoStack, { emails: get().emails, description: `Add "${email.subject || "draft"}"` }].slice(-20),
+      undoDescription: `Add "${email.subject || "draft"}"`,
+    });
+    saveEmail(email).catch((e) => console.error("Failed to save email:", e));
+  },
+
+  updateEmail: (id, updates) => {
+    const prev = get().emails.find((e) => e.id === id);
+    if (!prev) return;
+    const updated = { ...prev, ...updates };
+    const newEmails = get().emails.map((e) => (e.id === id ? updated : e));
+    set({
+      emails: newEmails,
+      undoStack: [...get().undoStack, { emails: get().emails, description: `Update "${prev.subject || "draft"}"` }].slice(-20),
+      undoDescription: `Update "${prev.subject || "draft"}"`,
+    });
+    saveEmail(updated).catch((e) => console.error("Failed to save email:", e));
+  },
+
+  deleteEmail: (id) => {
+    const prev = get().emails.find((e) => e.id === id);
+    const newEmails = get().emails.filter((e) => e.id !== id);
+    set({
+      emails: newEmails,
+      selectedEmailId: get().selectedEmailId === id ? null : get().selectedEmailId,
+      undoStack: [...get().undoStack, { emails: get().emails, description: `Delete "${prev?.subject || "email"}"` }].slice(-20),
+      undoDescription: `Delete "${prev?.subject || "email"}"`,
+    });
+    deleteEmailFromDB(id).catch((e) => console.error("Failed to delete email from DB:", e));
+  },
+
+  setEmails: (emails) => {
+    set({ emails });
+    debouncedSave(emails);
+  },
+
+  setCurrentFolder: (folder) => set({ currentFolder: folder, selectedEmailId: null }),
+
+  setSelectedEmailId: (id) => set({ selectedEmailId: id }),
+
+  composeDraft: () => {
+    const newDraft: Email = {
+      id: `draft-${Date.now()}`,
+      subject: "",
+      from: "you@sherwinmail.io",
+      to: "",
+      body: "",
+      status: "draft",
+      date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+      isRead: true,
+    };
+    const newEmails = [newDraft, ...get().emails];
+    set({
+      emails: newEmails,
+      currentFolder: "draft",
+      selectedEmailId: newDraft.id,
+      undoStack: [...get().undoStack, { emails: get().emails, description: "New draft" }].slice(-20),
+      undoDescription: "New draft",
+    });
+    saveEmail(newDraft).catch((e) => console.error("Failed to save draft:", e));
+  },
+
+  replyToEmail: (replyTo) => {
+    const newDraft: Email = {
+      id: `draft-${Date.now()}`,
+      subject: replyTo.subject.startsWith("Re:") ? replyTo.subject : `Re: ${replyTo.subject}`,
+      from: "you@sherwinmail.io",
+      to: replyTo.from,
+      body: `\n\nOn ${replyTo.date}, ${replyTo.from} wrote:\n> ${replyTo.body.split("\n").join("\n> ")}`,
+      status: "draft",
+      date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+      isRead: true,
+    };
+    const newEmails = [newDraft, ...get().emails];
+    set({
+      emails: newEmails,
+      currentFolder: "draft",
+      selectedEmailId: newDraft.id,
+      undoStack: [...get().undoStack, { emails: get().emails, description: `Reply to "${replyTo.subject}"` }].slice(-20),
+      undoDescription: `Reply to "${replyTo.subject}"`,
+    });
+    saveEmail(newDraft).catch((e) => console.error("Failed to save reply draft:", e));
+  },
+
+  selectEmail: (id) =>
+    set((s) => {
+      const updated = s.emails.map((e) => (e.id === id ? { ...e, isRead: true } : e));
+      const email = updated.find((e) => e.id === id);
+      if (email) saveEmail(email).catch(() => {});
+      return { selectedEmailId: id, emails: updated };
+    }),
+
+  undoEmailAction: () =>
+    set((s) => {
+      if (s.undoStack.length === 0) return {};
+      const prev = s.undoStack[s.undoStack.length - 1];
+      debouncedSave(prev.emails);
+      return {
+        emails: prev.emails,
+        undoStack: s.undoStack.slice(0, -1),
+        undoDescription: null,
+      };
+    }),
+
+  clearUndo: () => set({ undoDescription: null }),
+
+  addLabelToEmail: (emailId, labelId) => {
+    const newEmails = get().emails.map((e) =>
+      e.id === emailId ? { ...e, labels: [...new Set([...(e.labels || []), labelId])] } : e
+    );
+    set({ emails: newEmails });
+    const email = newEmails.find((e) => e.id === emailId);
+    if (email) saveEmail(email).catch(() => {});
+  },
+
+  removeLabelFromEmail: (emailId, labelId) => {
+    const newEmails = get().emails.map((e) =>
+      e.id === emailId ? { ...e, labels: (e.labels || []).filter((l) => l !== labelId) } : e
+    );
+    set({ emails: newEmails });
+    const email = newEmails.find((e) => e.id === emailId);
+    if (email) saveEmail(email).catch(() => {});
+  },
+
+  addLabel: (name, color) => {
+    const newLabel = { id: `label-${Date.now()}`, name, color };
+    const newLabels = [...get().labels, newLabel];
+    set({ labels: newLabels });
+    saveAllLabels(newLabels).catch(() => {});
+  },
+
+  removeLabel: (id) => {
+    const newLabels = get().labels.filter((l) => l.id !== id);
+    const newEmails = get().emails.map((e) => ({
+      ...e,
+      labels: (e.labels || []).filter((l) => l !== id),
+    }));
+    set({ labels: newLabels, emails: newEmails });
+    saveAllLabels(newLabels).catch(() => {});
+    debouncedSave(newEmails);
+  },
+}));

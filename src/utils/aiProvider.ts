@@ -6,6 +6,65 @@ export interface ProviderCapabilities {
   error?: string;
 }
 
+export interface VisionModelPreset {
+  tier: "low" | "medium" | "high";
+  label: string;
+  description: string;
+  icon: string;
+  ollamaModels: string[];
+  lmStudioModels: string[];
+  vramRequired: string;
+  capabilities: string[];
+}
+
+export const VISION_MODEL_PRESETS: VisionModelPreset[] = [
+  {
+    tier: "low",
+    label: "Lightweight",
+    description: "Fastest vision model. Good for quick image reads and simple drafts.",
+    icon: "⚡",
+    ollamaModels: ["moondream", "bakllava"],
+    lmStudioModels: ["moondream", "bakllava"],
+    vramRequired: "2-3 GB",
+    capabilities: ["Image reading", "Basic PDF analysis", "Quick drafts"],
+  },
+  {
+    tier: "medium",
+    label: "Balanced",
+    description: "Best balance of speed and quality. Handles images, PDFs, and smart drafting.",
+    icon: "🔥",
+    ollamaModels: ["llava:7b", "llava:latest"],
+    lmStudioModels: ["llava-7b", "llava"],
+    vramRequired: "5-6 GB",
+    capabilities: ["High-quality image analysis", "Full PDF reading", "Smart email drafting"],
+  },
+  {
+    tier: "high",
+    label: "Powerful",
+    description: "Best quality. Reads complex documents, resumes, and multi-page PDFs.",
+    icon: "🚀",
+    ollamaModels: ["llava:13b", "llama3.2-vision:11b"],
+    lmStudioModels: ["llava-13b", "llama3.2-vision-11b"],
+    vramRequired: "8+ GB",
+    capabilities: ["Complex document analysis", "Resume scanning", "Multi-page PDFs", "Advanced reasoning"],
+  },
+];
+
+export function matchPresetToInstalled(
+  preset: VisionModelPreset,
+  installedModels: string[],
+  provider: "ollama" | "lmstudio"
+): { matched: boolean; matchedModel: string | null } {
+  const recommended = provider === "ollama" ? preset.ollamaModels : preset.lmStudioModels;
+  for (const rec of recommended) {
+    const found = installedModels.find(
+      (m) => m === rec || m.startsWith(rec + ":") || m.includes(rec)
+    );
+    if (found) return { matched: true, matchedModel: found };
+  }
+  return { matched: false, matchedModel: null };
+}
+
 interface ChatRequest {
   messages: { role: "user" | "assistant" | "system"; content: string | MessageContentPart[] }[];
   onChunk: (chunk: string) => void;
@@ -41,10 +100,18 @@ async function checkOllama(): Promise<ProviderCapabilities> {
     const res = await fetch("http://localhost:11434/api/tags", { signal: AbortSignal.timeout(3000) });
     if (!res.ok) return { available: false, models: [], error: `Ollama responded ${res.status}` };
     const data = await res.json();
-    const models: string[] = (data.models || []).map((m: any) => m.name);
+    const models: string[] = (data.models || []).map((m: { name: string }) => m.name);
     return { available: models.length > 0, models };
-  } catch (e: any) {
-    return { available: false, models: [], error: e?.message || "Ollama unreachable" };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "Ollama unreachable";
+    const isCors = msg.includes("Failed to fetch") || msg.includes("NetworkError") || msg.includes("CORS");
+    return {
+      available: false,
+      models: [],
+      error: isCors
+        ? "Connection blocked — enable CORS in Ollama server settings, or check it is running on port 11434"
+        : msg,
+    };
   }
 }
 
@@ -53,10 +120,18 @@ async function checkLMStudio(): Promise<ProviderCapabilities> {
     const res = await fetch("http://localhost:1234/v1/models", { signal: AbortSignal.timeout(3000) });
     if (!res.ok) return { available: false, models: [], error: `LM Studio responded ${res.status}` };
     const data = await res.json();
-    const models: string[] = (data.data || []).map((m: any) => m.id);
+    const models: string[] = (data.data || []).map((m: { id: string }) => m.id);
     return { available: models.length > 0, models };
-  } catch (e: any) {
-    return { available: false, models: [], error: e?.message || "LM Studio unreachable" };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "LM Studio unreachable";
+    const isCors = msg.includes("Failed to fetch") || msg.includes("NetworkError") || msg.includes("CORS");
+    return {
+      available: false,
+      models: [],
+      error: isCors
+        ? "Connection blocked — enable CORS in LM Studio (Local Server → Server Settings → Enable CORS), or check it is running on port 1234"
+        : msg,
+    };
   }
 }
 
@@ -80,8 +155,8 @@ async function checkWebGPU(): Promise<ProviderCapabilities> {
         "Llama-3-8B-Instruct-q4f16_1-MLC-1k",
       ],
     };
-  } catch (e: any) {
-    return { available: false, models: [], error: e?.message || "WebGPU device creation failed" };
+  } catch (e: unknown) {
+    return { available: false, models: [], error: e instanceof Error ? e.message : "WebGPU device creation failed" };
   }
 }
 
@@ -131,7 +206,16 @@ export async function chatCompletion(req: ChatRequest): Promise<string> {
     stream: true,
   });
 
-  const res = await fetch(url, { method: "POST", headers, body, signal: req.signal });
+  let res: Response;
+  try {
+    res = await fetch(url, { method: "POST", headers, body, signal: req.signal });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "Network error";
+    const isCors = msg.includes("Failed to fetch") || msg.includes("NetworkError") || msg.includes("CORS");
+    throw new Error(isCors
+      ? `Cannot reach ${config.provider === "lmstudio" ? "LM Studio" : config.provider === "ollama" ? "Ollama" : "server"} — enable CORS in the server settings and make sure it is running`
+      : msg);
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`Provider error ${res.status}: ${text}`);
