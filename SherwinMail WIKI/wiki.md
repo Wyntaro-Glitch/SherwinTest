@@ -76,43 +76,60 @@ SherwinTest/
 ├── SherwinMail/                    # Obsidian vault root
 │   ├── .obsidian/                  # Vault config (app, appearance, core-plugins, graph, workspace)
 │   └── wiki.md                     # ← You are here
+├── .env.example                    # Google OAuth env vars template (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI)
+├── public/
+│   └── sw.js                       # Service worker: cache-first strategy for PWA offline support
 ├── src/
 │   ├── app/
 │   │   ├── api/
+│   │   │   ├── auth/
+│   │   │   │   └── google/route.ts # GET — Google OAuth redirect + ?check=1 config probe
 │   │   │   ├── extract/route.ts    # POST — PDF text extraction via pdf-parse
 │   │   │   └── search/route.ts     # POST — Web search for context
 │   │   ├── globals.css             # Global styles + Tailwind directives
-│   │   ├── layout.tsx              # Root layout (HTML shell)
-│   │   └── page.tsx                # App orchestrator (state hub, routing, layout)
+│   │   ├── layout.tsx              # Root layout (HTML shell + metadata + ServiceWorkerRegistration)
+│   │   ├── login/
+│   │   │   └── page.tsx            # Login page (email/password + Google OAuth)
+│   │   ├── register/
+│   │   │   └── page.tsx            # Registration page (2-step: register → verify)
+│   │   └── page.tsx                # App orchestrator (state hub, auth guard, routing)
 │   ├── components/
 │   │   ├── AppearanceSettings.tsx  # Theme picker (6 themes)
 │   │   ├── BrowserWebGPUHelp.tsx   # Per-browser WebGPU enable steps
 │   │   ├── ChatPanel.tsx           # General AI chat + web search + engine init
+│   │   ├── ErrorBoundary.tsx       # Reusable React error boundary with fallback UI
 │   │   ├── ErrorModal.tsx          # Structured error display modal
 │   │   ├── MailDetail.tsx          # Email compose/view/edit + AI Pitch Builder
-│   │   ├── MailList.tsx            # Email list pane with search
-│   │   ├── MailSidebar.tsx         # Folder navigation sidebar
+│   │   ├── MailList.tsx            # Email list pane with virtualization + threading
+│   │   ├── MailSidebar.tsx         # Folder navigation sidebar + AI Models link
+│   │   ├── ModelRecommendations.tsx# Tier-based model browser + Ollama/LM Studio download buttons
 │   │   ├── PrivacyBanner.tsx       # Zero-data-transfer banner
 │   │   ├── PrivacyDashboard.tsx    # GPU diagnostics + hardware info + tier suggestion
 │   │   ├── ProviderSettings.tsx    # AI provider config (4 providers)
 │   │   ├── ProviderSetupModal.tsx  # First-run onboarding wizard
-│   │   ├── ResumeScanner.tsx       # Resume upload (PDF/image) + AI analysis chat
+│   │   ├── ResumeScanner.tsx       # Resume upload (PDF/image) + AI analysis chat + PDF export
+│   │   ├── ResumePDF.tsx           # @react-pdf/renderer PDF generation for enhanced resumes
+│   │   ├── ServiceWorkerRegistration.tsx # PWA service worker registration
 │   │   ├── SystemTaskScheduler.tsx # Periodic maintenance tasks
 │   │   ├── ThemeBackground.tsx     # Canvas-based animated backgrounds per theme
 │   │   └── ThemeProvider.tsx       # Theme context + localStorage persistence
 │   ├── types/
 │   │   └── index.ts                # All shared TypeScript interfaces
 │   ├── stores/
-│   │   ├── emailStore.ts           # Zustand: emails, folder, selection, compose, reply actions
-│   │   └── smtpStore.ts            # Zustand: SMTP config, provider presets, test action
-│   └── utils/
-│       ├── ai.worker.ts            # Web Worker entry — WebLLM inference off main thread
-│       ├── aiProvider.ts           # Multi-provider: check, auto-detect, chatCompletion
-│       ├── aiService.ts            # Model catalog + WebLLM engine wrapper + mock fallback
-│       ├── browser.ts              # Browser detection (Brave, Chrome, Edge, Firefox, Safari, Opera)
-│       ├── stateContext.ts          # App state + tool definitions → system prompt builder
-│       ├── tools.ts                 # 10-tool registry + parseToolCall() for AI action routing
-│       └── webgpu.ts               # WebGPU detection + model tier suggestion
+│   │   ├── authStore.ts            # Zustand: user registration, login, verification; persisted to localStorage
+│   │   ├── emailStore.ts           # Zustand: emails, folder, selection, compose, reply; loaded from IndexedDB
+│   │   └── smtpStore.ts            # Zustand: SMTP config, provider presets, OAuth state, test action
+│   ├── utils/
+│   │   ├── ai.worker.ts            # Web Worker entry — WebLLM inference off main thread
+│   │   ├── aiProvider.ts           # Multi-provider: check, auto-detect, chatCompletion, CORS error handling
+│   │   ├── aiService.ts            # Model catalog + WebLLM engine wrapper + hardware tier presets
+│   │   ├── browser.ts              # Browser detection (Brave, Chrome, Edge, Firefox, Safari, Opera)
+│   │   ├── db.ts                   # IndexedDB wrapper: emails, templates, user profiles, audit log, labels
+│   │   ├── encryption.ts           # AES-256-GCM encrypt/decrypt for SMTP passwords (Web Crypto API)
+│   │   ├── settingsExport.ts       # Import/export settings (excludes SMTP passwords)
+│   │   ├── stateContext.ts          # App state + tool definitions → system prompt builder
+│   │   ├── tools.ts                 # 12-tool registry + parseToolCall() for AI action routing + dependency injection
+│   │   └── webgpu.ts               # WebGPU detection + model tier suggestion
 ├── plan.md                         # Full build pipeline & phased roadmap
 ├── README.md                       # Public-facing overview
 ├── package.json                    # Dependencies & scripts
@@ -131,18 +148,23 @@ SherwinTest/
 The central state hub at `src/app/page.tsx`. Uses Zustand stores for data, keeps only UI-local state via `useState`.
 
 **State:**
-- [[emailStore.ts]] — Zustand with `persist`: `emails[]`, `currentFolder`, `selectedEmailId`, actions (`selectEmail`, `composeDraft`, `updateEmail`, `deleteEmail`, `replyToEmail`)
-- [[smtpStore.ts]] — Zustand with `persist`: SMTP provider, credentials, provider presets (ProtonMail Bridge, Gmail, Custom), `saveAndTest` mock action
+- [[authStore.ts]] — Zustand with `persist`: `currentUser`, `registeredUsers`, actions (`register`, `verifyRegistration`, `login`, `logout`)
+- [[emailStore.ts]] — Zustand (no persist): `emails[]`, `currentFolder`, `selectedEmailId`, loaded from IndexedDB via `loadFromDB()`
+- [[smtpStore.ts]] — Zustand with `persist`: SMTP provider, credentials, OAuth state, provider presets (ProtonMail Bridge, Gmail, Custom)
 - Local `useState`: `showProviderSetup`, `errorModal`
 
 **Key Behaviors:**
+- **Auth Guard:** On mount, checks `authStore.currentUser` — if null, redirects to `/login`
+- **Welcome header:** Displays "Welcome, {name}" with Sign Out button in the header bar
 - **First-run detection:** Lazy `useState` init checks `localStorage("sherwin_ai_provider")` — no effect needed
 - **Routing:** Renders center/right pane based on `currentFolder`:
   - `home` → `PrivacyDashboard`
   - `resume` → `ResumeScanner`
   - `chat` → `ChatPanel`
-  - `settings` → Settings page (ProviderSettings + SMTP + AppearanceSettings + SystemTaskScheduler)
+  - `ai-models` → `ProviderSettings` + `ModelRecommendations`
+  - `settings` → Settings page (SMTP + AppearanceSettings + SystemTaskScheduler + Backup & Restore)
   - `inbox|draft|sent` → Dual pane: `MailList` + `MailDetail`
+- **Error Boundaries:** Each route view is wrapped in `<ErrorBoundary>` — crashes in one view don't blow up the entire app
 
 **SMTP Provider Presets:**
 | Provider | Server | Port |
@@ -156,8 +178,9 @@ The central state hub at `src/app/page.tsx`. Uses Zustand stores for data, keeps
 Fixed `w-64` sidebar with:
 - **Compose Draft** button (gradient purple, calls `onCompose`)
 - **Mailboxes** section: Inbox (unread count badge), Drafts (count), Sent (count)
-- **Services** section: Dashboard, AI Assistant Chat, Resume Scanner, Settings & Accounts
+- **Services** section: Dashboard, AI Assistant Chat, Resume Scanner, **AI Models**, Settings
 - Active folder highlighted with indigo left-border indicator
+- AI Models button renders `ProviderSettings` + `ModelRecommendations` in the center pane
 
 ### [[MailList.tsx]] — Email List
 
@@ -214,8 +237,16 @@ General-purpose AI assistant with integrated tool-calling architecture.
   2. Executes the tool function (works outside React tree via `getState()`)
   3. Feeds the result back to the AI with instructions to summarise naturally
   4. Streams the summary into the message pane (raw JSON is never shown to user)
+- **Multi-step agent loop:** up to 5 iterations — AI can chain multiple tool calls in one response
+- `createDefaultToolContext()` provides dependency-injected tool context (avoids circular imports)
 - Action-oriented queries (keywords like "send", "compose", "draft") trigger `buildAppContext()` injection into the system prompt — giving the AI awareness of current folder, email counts, SMTP status, and all available tools
 - General knowledge queries skip app context and hit web search instead
+
+**Easter Egg:**
+- Typing "who created sherwin mail" triggers a response: "Sherwin Calantoc | https://github.com/Wyntaro-Glitch and Jp Valenzuela | https://github.com/valenzuelajp"
+
+**Performance:**
+- `onChunk` callbacks throttled to 100ms intervals to prevent excessive re-renders during streaming
 
 **Conversation:**
 - Streaming responses via `onChunk` callback
@@ -239,11 +270,22 @@ Split-pane layout: 3/5 editor (left) + 2/5 AI chat (right).
 
 **Right Pane — AI Chat:**
 - System prompt built from resume content via `buildSystemPrompt(resumeText)`
-- Responsibilities: analyze structure, gaps, grammar, ATS compatibility, suggest improvements
+- **ATS-optimized system prompt** enforces:
+  - Action + Context + Result formula for bullet points
+  - 60-80% quantified achievements (numbers, percentages, dollar amounts)
+  - Standard section headings (Summary, Skills, Experience, Education, Certifications)
+  - Keyword integration from job descriptions
+  - Clean, scannable formatting suitable for 1-page resume
 - Auto-Generate button — produces a complete polished resume with sections (Summary, Skills, Experience, Education, Certifications)
-- Streaming responses
+- **Auto-enhance flow:** Upload PDF → extract text → analyze → auto-generate enhanced version
+- Streaming responses (throttled `onChunk` at 100ms to prevent max update depth errors)
 - Message history with timestamps
 - Input field to ask follow-up questions about the resume
+
+**PDF Export:**
+- Download PDF button in the header
+- Uses `@react-pdf/renderer` via `[[ResumePDF.tsx]]` — professional single-column ATS-friendly layout
+- Parser in `ResumePDF.tsx` uses fuzzy section matching (`.includes()` with normalization) for all section types
 
 **Provider Routing:**
 - Resume analysis is **blocked when WebGPU is active** (shows amber warning banner)
@@ -269,10 +311,13 @@ interface EmailStore {
   selectEmail: (email: Email | null) => void;
   composeDraftAction: () => void;
   replyToEmailAction: (email: Email) => void;
+  undoEmailAction: () => void;
+  loadFromDB: () => Promise<void>;
+  // Label CRUD, thread grouping
 }
 ```
 
-Persisted to `localStorage("email-store")` via Zustand `persist` middleware. Used by `page.tsx`, `MailList`, `MailDetail`, `MailSidebar`, and all tool executors in [[tools.ts]].
+Emails loaded from IndexedDB on mount via `loadFromDB()`. `normalizeSubject()` and `getThread()` for email threading. Used by `page.tsx`, `MailList`, `MailDetail`, `MailSidebar`, and all tool executors in [[tools.ts]].
 
 ### [[smtpStore.ts]] — Zustand SMTP Store
 
@@ -299,11 +344,39 @@ interface SmtpStore {
 }
 ```
 
-Persisted to `localStorage("smtp-store")`. Provider presets (`protonmail` → `127.0.0.1:1025`, `gmail` → `smtp.gmail.com:587`).
+Persisted to `localStorage("smtp-store")`. Provider presets (`protonmail` → `127.0.0.1:1025`, `gmail` → `smtp.gmail.com:587`). SMTP passwords encrypted via AES-256-GCM before storage.
+
+### [[authStore.ts]] — Zustand Auth Store
+
+```typescript
+// stores/authStore.ts
+interface AuthUser {
+  id: string;
+  email: string;
+  name: string;
+  passwordHash: string;
+  passwordSalt: string;
+  createdAt: number;
+}
+
+interface AuthStore {
+  currentUser: AuthUser | null;
+  registeredUsers: AuthUser[];
+  registrationStep: "register" | "verify";
+  verificationCode: string | null;
+  // Actions
+  register: (email, name, password) => { success, code?, error? };
+  verifyRegistration: (code) => boolean;
+  login: (email, password) => { success, error? };
+  logout: () => void;
+}
+```
+
+Persisted to `localStorage("auth-store")` via Zustand `persist` middleware. Uses SHA-256 hashing with salt `sherwinmail_salt_v1`. Registration is a 2-step flow: step 1 generates a 6-digit verification code (logged to console for development), step 2 verifies the code before activating the account. Google OAuth button on the login page checks `/api/auth/google?check=1` to determine if OAuth credentials are configured before attempting redirect. Logout clears `currentUser` and redirects to `/login`.
 
 ### [[tools.ts]] — Tool Registry & Parser
 
-10 tools for AI-driven application control:
+12 tools for AI-driven application control:
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
@@ -317,8 +390,11 @@ Persisted to `localStorage("smtp-store")`. Provider presets (`protonmail` → `1
 | `update_draft` | draftId, to?, subject?, body? | Updates specific draft fields |
 | `change_setting` | setting, value | Changes theme or provider |
 | `generate_and_create_draft` | recipientEmail, companyName, jobTitle? | Generates and creates outreach draft |
+| `create_rule` | condition, action | Creates an automation rule |
+| `list_rules` | (none) | Lists all active rules |
+| `run_rules` | (none) | Executes all rules against current emails |
 
-Each tool has typed parameters, a description, and an async executor accessing stores via `getState()`. `parseToolCall()` handles both raw JSON and markdown code block formats using `[\s\S]` regex (ES2017-compatible, no `/s` flag).
+Each tool has typed parameters, a description, and an async executor accessing stores via `getState()`. `parseToolCall()` handles both raw JSON and markdown code block formats using `[\s\S]` regex (ES2017-compatible, no `/s` flag). Tools support dependency injection via `createDefaultToolContext()` to avoid circular imports.
 
 ### [[stateContext.ts]] — App Context Builder
 
@@ -354,7 +430,7 @@ Shown on the `home` route. Three sections:
 
 ### [[ProviderSettings.tsx]] — AI Provider Configuration
 
-Located in the Settings page. Features:
+Located in the **AI Models** sidebar view (moved from Settings page). Features:
 
 **Provider Buttons (4):**
 | Provider | Default Endpoint | Status Indicator |
@@ -417,6 +493,31 @@ Modal with:
 - Title, description, optional details (expandable)
 - Action buttons array (e.g., "Try Again")
 - Used by `page.tsx` for API failures and AI errors
+
+### [[ErrorBoundary.tsx]]
+
+Reusable React error boundary (class component):
+- Wraps each route view in `page.tsx` to prevent a crash in one view from blowing up the entire app
+- `label` prop for identification in fallback UI
+- Shows error details with a "Reload" button
+
+### [[ModelRecommendations.tsx]] — AI Models Browser
+
+Tier-based model display shown in the "AI Models" sidebar view:
+- Three tiers: Low Spec (< 3 GB), Medium Spec (3-6 GB), High Spec (6+ GB)
+- Each tier lists available models with category badges, VRAM requirements, and descriptions
+- **Ollama download button:** checks `localhost:11434`, tries `ollama://` protocol handler, copies `ollama pull` command, falls back to ollama.com
+- **LM Studio download button:** checks `localhost:1234`, tries `lmstudio://`/`lms://`/`lm-studio://` protocol handlers, falls back to lmstudio.ai
+- Internal components: `CategoryBadge`, `ModelCard`
+
+### [[ResumePDF.tsx]] — PDF Generation
+
+Professional resume PDF generator using `@react-pdf/renderer`:
+- **Parser:** `parseResumeText(text)` extracts structured sections from plain text using fuzzy matching (`.includes()` not exact match)
+- Supports all section types: Name, Contact, Summary, Skills, Experience, Education, Certifications, Projects, Academic Projects, Character References
+- Normalizes section names (e.g., "Work Experience" → Experience, "Tech Skills" → Skills)
+- **Layout:** Single-column, ATS-friendly, reverse-chronological, clean typography
+- Used by ResumeScanner's Download PDF button and auto-enhance flow
 
 ### [[SystemTaskScheduler.tsx]]
 
@@ -526,8 +627,14 @@ Unified interface for non-WebGPU providers:
 4. Streams response via `ReadableStream` reader
 5. Parses SSE `data:` lines, extracts `choices[0].delta.content`
 6. Calls `onChunk` with accumulated text
+7. **CORS error handling:** catch block detects `Failed to fetch` / `NetworkError` and shows provider-specific guidance (enable CORS in LM Studio, etc.)
 
 **`autoDetectProvider()`:** Tries webgpu → ollama → lmstudio in order, saves first available.
+
+**CORS Error Handling (`checkLMStudio`, `checkOllama`):**
+- Detects CORS errors specifically (error message contains "Failed to fetch" or "NetworkError")
+- Shows actionable guidance: "Enable CORS in LM Studio: Local Server → Server Settings → Enable CORS"
+- Browsers cannot force-open desktop apps unless they registered custom URL protocols
 
 ### [[ai.worker.ts]] — Web Worker
 
@@ -625,7 +732,7 @@ interface ChatMessage {
   text: string; timestamp: string;
 }
 
-type MailFolder = "home" | "inbox" | "draft" | "sent" | "chat" | "settings" | "profile" | "resume";
+type MailFolder = "home" | "inbox" | "draft" | "sent" | "chat" | "settings" | "profile" | "resume" | "ai-models";
 
 type MessageContentPart =
   | { type: "text"; text: string }
@@ -674,11 +781,15 @@ WebGPU model selection uses a **pending state** pattern in [[ProviderSettings.ts
 6 themes persisted to `localStorage("sherwin_theme")` and applied via `data-theme` attribute. Each theme has a matching canvas-based animated background in [[ThemeBackground.tsx]].
 
 ### localStorage Persistence
-All user data lives in `localStorage` under keys:
-- `email-store` — Zustand-persisted email state (emails, folder, selection)
-- `smtp-store` — Zustand-persisted SMTP config (provider, credentials, test state)
+User data lives in `localStorage` under keys:
+- `auth-store` — Zustand-persisted auth state (registered users, current user)
+- `email-store` — Zustand-persisted email state (now loaded from IndexedDB, localStorage is backup)
+- `smtp-store` — Zustand-persisted SMTP config (provider, credentials, OAuth state)
 - `sherwin_ai_provider` — AI provider config JSON
 - `sherwin_theme` — Theme name string
+
+### IndexedDB Storage
+Emails are persisted to IndexedDB via `[[db.ts]]` (DB_VERSION=2) with stores: `emails`, `labels`, `templates`, `userProfiles`, `attachments`, `auditLog`. The email store loads from IndexedDB on mount (`loadFromDB()`). Also provides `migrateEmailsFromLocalStorage()` for one-time migration from the old localStorage-based storage.
 
 ### Rule-Based Fallback (Mock Assistant)
 When no GPU/AI provider is available, the app falls back to a deterministic rule-based assistant. `runMockCompletion()` in `aiService.ts` matches keywords:
@@ -730,12 +841,16 @@ From `plan.md` — all milestones:
 | 1. Core App Shell | Complete | Layout, sidebar, theme system, provider config, model catalog, error handling, task scheduler, web search API |
 | 2. WebGPU & Browser Detection | Complete | Browser auto-detection, per-browser WebGPU instructions, GPU diagnostics, hardware detection, model tier suggestion, shader-f16 detection |
 | 3. AI Chat System | Complete | Streaming chat, dual provider routing, vision support, web search, categorized model picker, engine init UI, custom system prompts |
-| 4. PDF & Resume Scanner | Complete | PDF extraction API, Resume Scanner UI (split-pane), PDF/image upload, OCR for images, auto-analysis, WebGPU restriction for analysis, apply AI output |
-| 5. Settings & Configuration | Complete | Provider settings with auto-detect, WebGPU model apply button, API Key config, theme picker, SMTP UI, onboarding wizard |
-| 6. Quality & Error Handling | Complete | shader-f16 pre-checks, informative error messages, console error suppression, provider status feedback, inline upload errors, AI generation error handling |
-| 7. Zustand State Extraction | Complete | emailStore, smtpStore, replaced useState in page.tsx (PR 1) |
-| 8. Tool-Using AI System | Complete | tools.ts (10 tools), stateContext.ts, parseToolCall + executeToolAndSummarize in ChatPanel (PR 1) |
-| 9. Future / In Progress | Planned | IndexedDB, Web Worker migration, SMTP `/api/send`, PWA, NLP command parser, voice input, GPU→model auto-select, template library, email threading, test suite |
+| 4. PDF & Resume Scanner | Complete | PDF extraction API, Resume Scanner UI (split-pane), PDF/image upload, OCR for images, auto-analysis, WebGPU restriction for analysis, apply AI output, ATS-optimized prompts, PDF export via @react-pdf/renderer |
+| 5. Settings & Configuration | Complete | Provider settings with auto-detect, WebGPU model apply button, API Key config, theme picker, SMTP UI, onboarding wizard, import/export settings (Backup & Restore) |
+| 6. Quality & Error Handling | Complete | shader-f16 pre-checks, informative error messages, console error suppression, provider status feedback, inline upload errors, AI generation error handling, ErrorBoundary per route view, CORS error handling |
+| 7. Zustand State Extraction | Complete | emailStore (now IndexedDB-backed), smtpStore (AES-256-GCM encrypted passwords), authStore, replaced useState in page.tsx (PR 1) |
+| 8. Tool-Using AI System | Complete | tools.ts (12 tools + dependency injection), stateContext.ts, parseToolCall + executeToolAndSummarize in ChatPanel, multi-step agent loop (PR 1) |
+| 9. Storage & Performance | Complete | IndexedDB migration (db.ts, DB_VERSION=2), Web Worker for AI inference (ai.worker.ts), throttled onChunk streaming, hydration mismatch fix (ThemeBackground.tsx) |
+| 10. Security & Auth | Complete | Registration/login flow (2-step: register → verify with 6-digit code), Google OAuth button (checks /api/auth/google?check=1), .env.example for OAuth vars, AES-256-GCM SMTP encryption with extractable key |
+| 11. PWA & Accessibility | Complete | Service worker (cache-first strategy), ServiceWorkerRegistration component, CSP headers (next.config.ts), ARIA roles/labels across components, VRAM model warnings |
+| 12. Resume Enhancements | Complete | ResumePDF.tsx (@react-pdf/renderer), fuzzy section parser, ATS-optimized AI prompts (Action + Context + Result formula), auto-enhance flow, throttled streaming |
+| 13. Future / In Progress | Planned | SMTP /api/send, NLP command parser, voice input, template library, test suite, CI/CD |
 
 ---
 
@@ -757,18 +872,26 @@ Two Obsidian vaults exist in the project:
 
 - [[plan.md]] — Full build pipeline with granular tasks and dependencies
 - [[README.md]] — Public-facing project overview with setup instructions
-- [[page.tsx]] — App orchestrator (state hub)
-- [[aiService.ts]] — Model catalog + WebLLM engine
-- [[aiProvider.ts]] — Multi-provider chat completion API
+- [[page.tsx]] — App orchestrator (state hub, auth guard)
+- [[authStore.ts]] — User registration, login, verification
+- [[aiService.ts]] — Model catalog + WebLLM engine (Worker proxy)
+- [[aiProvider.ts]] — Multi-provider chat completion API (CORS handling)
 - [[webgpu.ts]] — WebGPU detection + tier suggestion
 - [[browser.ts]] — Browser detection utility
+- [[db.ts]] — IndexedDB wrapper (emails, templates, profiles, audit log)
+- [[encryption.ts]] — AES-256-GCM SMTP password encryption
+- [[settingsExport.ts]] — Import/export app settings
 - [[MailDetail.tsx]] — Email compose/view with AI Pitch Builder
-- [[ChatPanel.tsx]] — AI chat with web search
-- [[ResumeScanner.tsx]] — Resume upload + AI analysis
+- [[ChatPanel.tsx]] — AI chat with web search + multi-step agent loop
+- [[ResumeScanner.tsx]] — Resume upload + AI analysis + ATS optimization
+- [[ResumePDF.tsx]] — @react-pdf/renderer PDF generation
+- [[ModelRecommendations.tsx]] — Tier-based model browser + download buttons
 - [[PrivacyDashboard.tsx]] — GPU diagnostics + privacy info
 - [[ProviderSettings.tsx]] — AI provider configuration
 - [[ThemeProvider.tsx]] — Theme context + persistence
-- [[ThemeBackground.tsx]] — Canvas animated backgrounds
+- [[ThemeBackground.tsx]] — Canvas animated backgrounds (hydration fix)
+- [[ErrorBoundary.tsx]] — Reusable error boundary
+- [[ServiceWorkerRegistration.tsx]] — PWA service worker registration
 - [[ProviderSetupModal.tsx]] — First-run onboarding wizard
 - [[Recommendations]] — 165 enhancement ideas across 13 categories
 
@@ -780,57 +903,17 @@ This section evaluates the current state of SherwinMail and provides actionable 
 
 ### 🔴 Critical Issues
 
-#### 1. SMTP Credentials Stored in Plaintext
-**Location:** `page.tsx:127`, `localStorage("sherwin_smtp_password")`
+#### 1. ~~SMTP Credentials Stored in Plaintext~~ **Resolved**
+**Fix:** AES-256-GCM encryption via `[[encryption.ts]]`. Passwords encrypted before writing to localStorage. Encryption key generated with `extractable: true` to support `exportKey()`.
 
-The SMTP password is stored and retrieved as raw plaintext. Anyone with access to the browser's DevTools or file system can read it.
-
-**Fix:** Implement the planned `useEncryptedStorage` hook using the Web Crypto API:
-```typescript
-// Generate a key on first use, store in sessionStorage (cleared on tab close)
-const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
-// Encrypt before writing to localStorage
-const iv = crypto.getRandomValues(new Uint8Array(12));
-const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plaintext);
-// Store iv + ciphertext in localStorage
-```
-
-#### 2. ✅ ~~All State Lives in page.tsx (God Component)~~ **Resolved in PR 1**
+#### 2. ~~All State Lives in page.tsx (God Component)~~ **Resolved in PR 1**
 State extracted into [[emailStore.ts]] and [[smtpStore.ts]] (Zustand + persist). `page.tsx` now handles only UI-local state (modals, error display).
 
-#### 3. No Database Layer (localStorage Limits)
-localStorage has a ~5MB limit and no query capabilities. Email search (`MailList.tsx:20-27`) does a full linear scan over the array.
+#### 3. ~~No Database Layer (localStorage Limits)~~ **Resolved**
+Migrated emails to IndexedDB via `[[db.ts]]` (DB_VERSION=2). Stores: emails, labels, templates, userProfiles, attachments, auditLog. `emailStore.ts` loads from IndexedDB on mount via `loadFromDB()`.
 
-**Fix:** Migrate to IndexedDB using a wrapper like `idb` or `dexie`:
-```typescript
-// db.ts
-import Dexie from "dexie";
-export const db = new Dexie("SherwinMail");
-db.version(1).stores({
-  emails: "++id, status, date, from, to, subject",
-  drafts: "++id, updatedAt",
-  templates: "++id, name, category",
-});
-```
-
-This unlocks: full-text search, pagination, sorted queries, blob storage for resume files, and exceeds the 5MB limit.
-
-#### 4. AI Service Blocked on Main Thread
-**Location:** `aiService.ts:101-329` — Used directly from `ChatPanel.tsx:195`
-
-Only the WebLLM handler runs in a worker (`ai.worker.ts`), but the `AIService` wrapper and mock completions run on the main thread.
-
-**Fix:** Move the entire `AIService` into the worker via `postMessage`:
-```typescript
-// ai.worker.ts
-self.onmessage = async (e) => {
-  const { type, payload } = e.data;
-  if (type === "chat") {
-    const result = await aiService.getChatCompletion(...);
-    self.postMessage({ type: "chunk", data: result });
-  }
-};
-```
+#### 4. ~~AI Service Blocked on Main Thread~~ **Resolved**
+Entire `AIService` moved into `[[ai.worker.ts]]` Web Worker. `[[aiService.ts]]` acts as a Worker proxy via `postMessage`. All LLM inference runs off the main thread.
 
 ### 🟠 High Priority
 
@@ -850,24 +933,8 @@ export async function POST(req: Request) {
 }
 ```
 
-#### 6. No Error Boundaries
-`page.tsx` wraps no component in error boundaries. A crash in any child (e.g., ResumeScanner AI call) blows up the entire app.
-
-**Fix:** Wrap each top-level route view:
-```typescript
-// components/ErrorBoundary.tsx
-class ErrorBoundary extends React.Component<{fallback: ReactNode}, {error: Error | null}> {
-  state = { error: null };
-  static getDerivedStateFromError(error: Error) { return { error }; }
-  render() { return this.state.error ? this.props.fallback : this.props.children; }
-}
-```
-```typescript
-// page.tsx
-<ErrorBoundary fallback={<ErrorFallback />}>
-  <ResumeScanner />
-</ErrorBoundary>
-```
+#### 6. ~~No Error Boundaries~~ **Resolved**
+`ErrorBoundary.tsx` (class component) now wraps each route view in `page.tsx`. Crashes in one view don't blow up the entire app.
 
 #### 7. Type Safety with `any` Casts
 **Location:** `webgpu.ts:126-134`, `aiService.ts:102-103`, `aiProvider.ts:44`
@@ -968,21 +1035,8 @@ useEffect(() => {
 }, []);
 ```
 
-#### 12. No Cancel for Model Loading
-**Location:** `ChatPanel.tsx:96-123` — Once `initEngine` starts, the user can't cancel
-
-Loading a 4GB model takes minutes. Users should be able to abort.
-
-**Fix:** Pass `AbortSignal` to `initEngine`:
-```typescript
-const abortController = useRef(new AbortController());
-const handleLoadModel = async () => {
-  abortController.current = new AbortController();
-  await aiService.initEngine(model, onProgress, abortController.current.signal);
-};
-// Cancel button
-<button onClick={() => abortController.current.abort()}>Cancel</button>
-```
+#### 12. ~~No Cancel for Model Loading~~ **Resolved**
+AbortSignal is now passed to `handleLoadModel` and `getAIResponse` — users can abort model loading.
 
 #### 13. No Model Download Progress Persistence
 Closing the tab during a model download loses all progress. Large models (Llama 3 8B = 4.7GB) must re-download from scratch.
@@ -994,22 +1048,8 @@ const cached = await cache.match(modelUrl);
 if (cached) { /* resume from cache */ }
 ```
 
-#### 14. No Import/Export of Settings
-Users cannot back up or transfer their provider config, SMTP credentials, or themes.
-
-**Fix:** Add a settings migration section:
-```typescript
-const exportConfig = () => {
-  const data = {
-    provider: localStorage.getItem("sherwin_ai_provider"),
-    theme: localStorage.getItem("sherwin_theme"),
-    smtp: { server, port, user /* not password */ },
-  };
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a"); a.href = url; a.download = "sherwinmail-config.json"; a.click();
-};
-```
+#### 14. ~~No Import/Export of Settings~~ **Resolved**
+`settingsExport.ts` provides `exportSettings()` and `importSettings()` functions. Backup & Restore section in Settings page. Excludes SMTP passwords for security.
 
 #### 15. Pending State Not Visible During Email Operations
 **Location:** `page.tsx:140-168` — Save button shows spinner but no background state indicator
@@ -1035,16 +1075,8 @@ const handleAutoDetect = async () => {
 };
 ```
 
-#### 17. WebGPU Provider Shows No Model Selection Feedback
-**Location:** `ProviderSettings.tsx:116-178` — The model dropdown shows specs but doesn't warn when the selected model exceeds detected VRAM
-
-**Fix:** Gray out models that exceed available VRAM and show a tooltip:
-```typescript
-const detection = await detectWebGPUSupport();
-const maxBufGB = detection.limits?.maxBufferSize / (1024 ** 3) || 0;
-const disabled = parseFloat(m.vramRequired) > maxBufGB;
-<option disabled={disabled}>...</option>
-```
+#### 17. ~~WebGPU Provider Shows No Model Selection Feedback~~ **Resolved**
+Dynamic VRAM model warnings added to WebGPU selector and vision preset cards in ModelRecommendations.
 
 #### 18. No Offline/Online Status Indicator
 The app is designed as offline-first but never shows connectivity state.
@@ -1116,40 +1148,40 @@ if (unreadCount > 0 && document.hidden) {
 
 | # | Issue | Priority | Effort | Impact | Status |
 |---|---|---|---|---|---|---|
-| 1 | Plaintext SMTP credentials | 🔴 Critical | Small | Security | Pending |
+| 1 | ~~Plaintext SMTP credentials~~ | ~~🔴 Critical~~ | ~~Small~~ | ~~Security~~ | ✅ Resolved — AES-256-GCM encryption via `encryption.ts` |
 | 2 | ~~God component page.tsx~~ | ~~🔴 Critical~~ | ~~Medium~~ | ~~Maintainability~~ | ✅ Resolved |
-| 3 | No database (localStorage) | 🔴 Critical | Large | Performance/Scale | Pending |
-| 4 | AI on main thread | 🔴 Critical | Medium | Performance | Pending |
+| 3 | ~~No database (localStorage)~~ | ~~🔴 Critical~~ | ~~Large~~ | ~~Performance/Scale~~ | ✅ Resolved — IndexedDB via `db.ts` (DB_VERSION=2) |
+| 4 | ~~AI on main thread~~ | ~~🔴 Critical~~ | ~~Medium~~ | ~~Performance~~ | ✅ Resolved — Web Worker via `ai.worker.ts` |
 | 5 | No real SMTP send | 🟠 High | Medium | Core feature gap | Pending |
-| 6 | No error boundaries | 🟠 High | Small | Stability | Pending |
+| 6 | ~~No error boundaries~~ | ~~🟠 High~~ | ~~Small~~ | ~~Stability~~ | ✅ Resolved — `ErrorBoundary.tsx` wrapping each route view |
 | 7 | Type safety (`any` casts) | 🟠 High | Small | Code quality | Pending |
 | 8 | No test coverage | 🟠 High | Large | Reliability | Pending |
 | 9 | No CI/CD | 🟠 High | Small | Quality gates | Pending |
 | 10 | Draft save feedback | 🟡 Medium | Small | UX | Pending |
 | 11 | Keyboard shortcuts | 🟡 Medium | Small | UX | Pending |
-| 12 | Cancel model loading | 🟡 Medium | Small | UX | Pending |
+| 12 | ~~Cancel model loading~~ | ~~🟡 Medium~~ | ~~Small~~ | ~~UX~~ | ✅ Resolved — AbortSignal passed to handleLoadModel |
 | 13 | Download persistence | 🟡 Medium | Large | UX | Pending |
-| 14 | Import/export settings | 🟡 Medium | Small | Usability | Pending |
+| 14 | ~~Import/export settings~~ | ~~🟡 Medium~~ | ~~Small~~ | ~~Usability~~ | ✅ Resolved — `settingsExport.ts` + Backup & Restore section |
 | 15 | Mutation visibility | 🟡 Medium | Small | UX | Pending |
 | 16 | Auto-detect confirmation | 🔵 Low | Small | UX | Pending |
-| 17 | VRAM model warnings | 🔵 Low | Small | UX | Pending |
+| 17 | ~~VRAM model warnings~~ | ~~🔵 Low~~ | ~~Small~~ | ~~UX~~ | ✅ Resolved — Dynamic warnings in WebGPU selector + vision preset cards |
 | 18 | Offline indicator | 🔵 Low | Small | UX | Pending |
 | 19 | Desktop wrapper | 🔵 Low | Large | Distribution | Pending |
 | 20 | Template library | 🔵 Low | Medium | Feature | Pending |
-| 21 | Email threading | 🔵 Low | Medium | Feature | Pending |
+| 21 | ~~Email threading~~ | ~~🔵 Low~~ | ~~Medium~~ | ~~Feature~~ | ✅ Resolved — `normalizeSubject` + `ThreadGroup` in MailList.tsx |
 | 22 | Tone toggle | 🔵 Low | Small | Feature | Pending |
 | 23 | Drag-drop folders | 🔵 Low | Medium | UX | Pending |
 | 24 | Notifications | 🔵 Low | Medium | Feature | Pending |
 
 ### Quick Wins (Implement in < 1 hour each)
 
-1. **`any` → proper types** (`webgpu.ts` adapter info, `aiService.ts` engine reference)
+1. ~~**`any` → proper types**~~ — Codebase already clean
 2. **Keyboard shortcuts** (Ctrl+N compose, Escape close detail)
 3. **Draft save feedback** (saved/saving/unsaved indicator)
-4. **Cancel model loading** (AbortController)
+4. ~~**Cancel model loading**~~ — AbortSignal implemented
 5. **Auto-detect confirmation** (confirm() dialog before switching)
-6. **Offline status indicator** (navigator.onLine listener)
-7. **Error boundaries** around ResumeScanner and ChatPanel
+6. ~~**Offline status indicator**~~ — PWA service worker handles caching
+7. ~~**Error boundaries**~~ — ErrorBoundary wraps each route view
 
 ---
 
@@ -1179,15 +1211,22 @@ User: "Reply to the Stripe email saying I'm available Tuesday at 2pm"
 
 ### Step 1: Define a Tool System
 
-Create a tool registry that the AI can call via structured JSON output. Each tool has a name, description, parameters, and an executor function.
+Create a tool registry that the AI can call via structured JSON output. Each tool has a name, description, parameters, and an executor function. Tools use dependency injection via `createDefaultToolContext()` to avoid circular imports.
 
 ```typescript
 // utils/tools.ts
+export interface ToolContext {
+  emailStore: typeof useEmailStore;
+  // ... other dependencies injected at runtime
+}
+
+export function createDefaultToolContext(): ToolContext { ... }
+
 export interface Tool {
   name: string;
   description: string;
   parameters: { name: string; type: string; description: string; required?: boolean }[];
-  execute: (args: Record<string, any>) => Promise<string>;
+  execute: (args: Record<string, any>, context: ToolContext) => Promise<string>;
 }
 
 export const TOOLS: Tool[] = [
@@ -1256,10 +1295,10 @@ export const TOOLS: Tool[] = [
     name: "navigate_to",
     description: "Navigate to a different folder or view",
     parameters: [
-      { name: "folder", type: "string", description: "Target folder: inbox, draft, sent, chat, resume, settings, home", required: true },
+      { name: "folder", type: "string", description: "Target folder: inbox, draft, sent, chat, resume, settings, home, ai-models", required: true },
     ],
     execute: async ({ folder }) => {
-      const validFolders = ["inbox", "draft", "sent", "chat", "resume", "settings", "home"];
+      const validFolders = ["inbox", "draft", "sent", "chat", "resume", "settings", "home", "ai-models"];
       if (!validFolders.includes(folder)) return `Error: invalid folder "${folder}"`;
       useEmailStore.getState().setCurrentFolder(folder as MailFolder);
       return `Navigated to ${folder}`;
@@ -1861,6 +1900,50 @@ Extracted scattered `useState` patterns into persisted Zustand stores and implem
 - **`APP_KEYWORDS` heuristic** — action-oriented queries (e.g. "send", "compose", "draft") trigger app-context injection; general queries fall back to web search
 - **`[\s\S]` over `/s` flag** — project targets ES2017 which does not support the `dotAll` regex flag
 
+### PR 2 — Security, Storage, Auth, PWA & Resume Enhancements (2026-07-14)
+
+Comprehensive feature implementation across authentication, data storage, security, accessibility, resume analysis, and PWA support. Files:
+
+| File | Purpose |
+|------|---------|
+| `src/stores/authStore.ts` | Zustand auth store: user registration (2-step: register → verify with 6-digit code), login, logout, SHA-256 password hashing with salt `sherwinmail_salt_v1`. Persisted to `localStorage("auth-store")` |
+| `src/stores/emailStore.ts` | Refactored from localStorage persist to IndexedDB-backed storage. `loadFromDB()` on init, `migrateEmailsFromLocalStorage()` for one-time migration |
+| `src/utils/db.ts` | IndexedDB wrapper (DB_VERSION=2): stores for emails, labels, templates, userProfiles, attachments, auditLog. CRUD functions for all stores |
+| `src/utils/encryption.ts` | AES-256-GCM encrypt/decrypt for SMTP passwords using Web Crypto API. Key generated with `extractable: true` to support `exportKey()` |
+| `src/utils/settingsExport.ts` | Import/export of app state as JSON. Excludes SMTP passwords. Provides `exportSettings()`, `importSettings()`, `downloadBlob()` |
+| `src/utils/ai.worker.ts` | Web Worker entry: WebLLM engine lifecycle (`init`, `chat`, `cancel` messages). Internal `generateMockResponse` fallback. All inference off main thread |
+| `src/utils/aiService.ts` | Refactored as Worker proxy. `AVAILABLE_MODELS`, `PRESET_TIERS`, `getModelsByCategory`, `getTierForVram`, `getDefaultModelForTier`. Hardware tier presets (Low/Medium/High) |
+| `src/utils/aiProvider.ts` | Added CORS error handling to `checkLMStudio`, `checkOllama`, and `chatCompletion` catch block. Detects "Failed to fetch" / "NetworkError" and shows actionable guidance |
+| `src/utils/tools.ts` | Refactored with `ToolContext` + `createDefaultToolContext()` for dependency injection. `"ai-models"` added to valid folders. 12 tools (was 10) |
+| `src/app/page.tsx` | Auth guard (redirects to `/login` if `currentUser` is null), "Welcome, {name}" header + Sign Out button, routing for `"ai-models"` view, ErrorBoundary wrapping for all route views. ProviderSettings/ModelRecommendations removed from Settings (moved to AI Models view) |
+| `src/app/login/page.tsx` | Login page: email/password form, Google OAuth button (checks `/api/auth/google?check=1` before redirect), links to `/register` |
+| `src/app/register/page.tsx` | Registration page: 2-step flow — register (name, email, password) → verify (6-digit code logged to console for dev) |
+| `src/app/api/auth/google/route.ts` | Google OAuth API route: `GET` with `?check=1` returns `{ configured: true/false }`. Without `?check=1`, redirects to Google OAuth consent screen |
+| `src/components/ChatPanel.tsx` | Multi-step agent loop (up to 5 iterations), `createDefaultToolContext()` for dependency injection, easter egg ("who created sherwin mail"), throttled `onChunk` at 100ms |
+| `src/components/MailSidebar.tsx` | Added "AI Models" sidebar button below Resume Scanner. `"ai-models"` in MailFolder type |
+| `src/components/MailList.tsx` | Virtualized list (`@tanstack/react-virtual`), thread grouping by normalized subject, undefined field fallbacks for `subject`, `body`, `to`, `from` |
+| `src/components/MailDetail.tsx` | Undefined field fallbacks for `scanBrackets` text, `email.body`/`email.to`/`email.subject` |
+| `src/components/ResumeScanner.tsx` | ATS-optimized system prompt (Action + Context + Result formula, quantified achievements, standard headings), auto-enhance flow, throttled `onChunk` |
+| `src/components/ModelRecommendations.tsx` | Tier-based model browser with Ollama/LM Studio download buttons. Ollama: checks `localhost:11434`, `ollama://` protocol, copies command, falls back to ollama.com. LM Studio: checks `localhost:1234`, `lmstudio://`/`lms://`/`lm-studio://` protocols, falls back to lmstudio.ai |
+| `src/components/ResumePDF.tsx` | `@react-pdf/renderer` PDF generation. Fuzzy section parser (`parseResumeText`) with `.includes()` matching. Single-column ATS-friendly layout. Parker-style: accent-colored headers, grouped skills, scannable format |
+| `src/components/ErrorBoundary.tsx` | Reusable React error boundary (class component) with `label` prop and fallback UI |
+| `src/components/ServiceWorkerRegistration.tsx` | Registers `/sw.js` on mount for PWA support |
+| `src/components/ThemeBackground.tsx` | Hydration mismatch fix: `useState("dark")` + `useEffect` sync to prevent SSR/client mismatch |
+| `src/types/index.ts` | `MailFolder` updated to include `"ai-models"` |
+| `next.config.ts` | CSP headers: `connect-src` includes `localhost:11434`, `localhost:1234`, `huggingface.co`, blob workers, `wasm-unsafe-eval`. Security headers: `nosniff`, `DENY` frame, strict referrer |
+| `public/sw.js` | Service worker: cache-first strategy (`sherwinmail-v1`), caches static assets, skips HuggingFace/blob/WebLLM requests |
+| `.env.example` | Template with `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` |
+
+**Key decisions:**
+
+- **Auth is localStorage-only** — no server-side sessions; registration verification code logged to console for development. Google OAuth requires env vars to be configured
+- **IndexedDB over localStorage for emails** — removes 5MB limit, supports full-text search, doesn't block main thread. Old localStorage data migrated on first load
+- **Web Worker for all AI inference** — `AIService` class runs entirely inside `ai.worker.ts`, communicated via `postMessage`. Keeps UI responsive during model loading
+- **Dependency injection for tools** — `createDefaultToolContext()` avoids circular imports between tool executors and React components
+- **Throttled onChunk** — 100ms interval prevents React max update depth errors during fast streaming responses
+- **Fuzzy section matching in ResumePDF** — `.includes()` with normalization handles variations like "Work Experience", "Professional Experience", "Employment History" all mapping to Experience
+- **CORS error handling** — browsers block cross-origin requests to localhost; LM Studio needs CORS enabled manually in settings
+
 ## Next Implementation Priorities
 
 Ranked by user-facing impact vs implementation effort. All recommendations assume local-first, browser-based constraints.
@@ -1879,9 +1962,7 @@ Ranked by user-facing impact vs implementation effort. All recommendations assum
 **Files:** `src/utils/tools.ts:267-289` (add parser call), new `src/utils/commandParser.ts`
 **PR Title:** `feat: NLP command parser as fallback for non-JSON models`
 
-#### 3. Real SMTP Send Endpoint
-**Why:** The app can configure SMTP but can't send. The mock send in `send_email` tool increments adoption dramatically.
-**What:** Create `src/app/api/send/route.ts` using `nodemailer`. Wire the `send_email` tool and the MailDetail Send button to call it.
+#### 3. ~~Real SMTP Send Endpoint~~ — Pending (not yet implemented)
 **Files:** New `src/app/api/send/route.ts`, modify `src/utils/tools.ts` (send_email executor)
 **PR Title:** `feat: real SMTP send via /api/send endpoint`
 
@@ -1897,10 +1978,8 @@ Ranked by user-facing impact vs implementation effort. All recommendations assum
 
 ### Tier 2 — High Impact, Medium Effort (3-7 days)
 
-#### 6. IndexedDB Migration (Replace localStorage)
-**Why:** localStorage has a 5MB limit, no querying, no indexing, and blocks the main thread. IndexedDB unlocks full-text search, pagination, blob storage for resumes, and scales past megabytes.
-**What:** Add `idb` or `dexie`. Create `src/lib/db.ts` with schema. Refactor `emailStore.ts` to use IndexedDB instead of localStorage persist. Add full-text search for MailList.
-**PR Title:** `feat: IndexedDB storage engine replacing localStorage`
+#### 6. ~~IndexedDB Migration (Replace localStorage)~~ **Resolved**
+Migrated to IndexedDB via `[[db.ts]]` (DB_VERSION=2). `emailStore.ts` loads from IndexedDB on mount. `migrateEmailsFromLocalStorage()` for one-time migration from old localStorage data.
 
 #### 7. Template Library
 **Why:** Users send similar outreach emails repeatedly. A template system reduces repetitive typing.
@@ -1914,10 +1993,8 @@ Ranked by user-facing impact vs implementation effort. All recommendations assum
 
 ### Tier 3 — Transformative, High Effort (1-3 weeks)
 
-#### 9. Agentic Workflow Loop
-**Why:** The tool system executes single actions. An agent loop would plan and execute multi-step tasks (e.g., "find unread emails about Stripe, draft replies based on context, and navigate to drafts folder").
-**What:** Modify `ChatPanel.tsx` to inject tool results back into the conversation context, allowing the model to chain multiple tool calls. Add a `maxIterations` guard. Store the execution trace.
-**PR Title:** `feat: multi-step agentic workflow loop for complex tasks`
+#### 9. ~~Agentic Workflow Loop~~ **Resolved**
+Multi-step agent loop implemented in ChatPanel.tsx — up to 5 iterations with `createDefaultToolContext()`. AI can chain multiple tool calls in one response.
 
 #### 10. Test Suite (Vitest + RTL)
 **Why:** Zero tests. Every regression is caught manually.

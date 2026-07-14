@@ -190,69 +190,137 @@ export function getDefaultModelForTier(tier: HardwareTier): ModelOption {
   return AVAILABLE_MODELS.find((m) => m.id === preset.defaultModelId) || AVAILABLE_MODELS[0];
 }
 
+// Worker communication types
+interface WorkerMessage {
+  type: string;
+  id: string;
+  payload?: Record<string, unknown>;
+}
+
+interface WorkerResponse {
+  type: string;
+  id: string;
+  data?: {
+    text?: string;
+    percent?: number;
+    content?: string;
+    message?: string;
+  };
+}
+
 export class AIService {
-  private engine: any | null = null;
-  private currentModelId: string = "";
-  private isInitializing = false;
+  private worker: Worker | null = null;
+  private currentModelId = "";
+  private pendingRequests = new Map<string, {
+    resolve: (value: WorkerResponse) => void;
+    reject: (reason: Error) => void;
+    onChunk?: (text: string) => void;
+  }>();
+  private requestId = 0;
 
-  constructor() {}
-
-  // Initialize WebLLM Engine
-  async initEngine(
-    modelId: string,
-    onProgress: (progress: { text: string; percent: number }) => void
-  ): Promise<boolean> {
-    if (modelId === "mock-assistant") {
-      this.currentModelId = modelId;
-      this.engine = null;
-      return true;
-    }
-
-    if (this.currentModelId === modelId && this.engine) {
-      return true;
-    }
-
-    this.isInitializing = true;
-    try {
-      // Import WebLLM dynamically to avoid server-side build issues
-      const { CreateMLCEngine } = await import("@mlc-ai/web-llm");
-
-      onProgress({ text: "Initializing WebGPU device...", percent: 10 });
-      
-      this.engine = await CreateMLCEngine(modelId, {
-        initProgressCallback: (report) => {
-          // report.progress is between 0 and 1
-          const percent = Math.round(report.progress * 90) + 10;
-          onProgress({ text: report.text, percent });
-        },
-      });
-
-      this.currentModelId = modelId;
-      return true;
-    } catch (e: any) {
-      console.error("WebLLM Engine failed to load:", e);
-      const msg = e?.message || String(e);
-      if (msg.includes("index_kernel") || msg.includes("ShaderModule") || msg.includes("shader")) {
-        this.currentModelId = "mock-assistant";
-        this.engine = null;
-        throw new Error(
-          "Your GPU driver doesn't support a required feature (shader-f16). " +
-          "Try: (1) Update your GPU drivers, (2) In Brave, enable brave://flags/#enable-unsafe-webgpu " +
-          "(keep Vulkan flag disabled — it causes black screens on Linux), " +
-          "(3) If using Linux, try Chrome or Edge which have better WebGPU support."
-        );
-      }
-      this.currentModelId = "mock-assistant";
-      this.engine = null;
-      throw new Error(e?.message || String(e));
-    } finally {
-      this.isInitializing = false;
+  constructor() {
+    if (typeof window !== "undefined" && typeof Worker !== "undefined") {
+      this.initWorker();
     }
   }
 
-  // Check if LLM Engine is loaded
+  private initWorker() {
+    try {
+      this.worker = new Worker(new URL("./ai.worker.ts", import.meta.url), { type: "module" });
+      this.worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+        const { type, id, data } = event.data;
+        const pending = this.pendingRequests.get(id);
+        if (!pending) return;
+
+        switch (type) {
+          case "progress":
+            if (pending.onChunk && data) {
+              pending.onChunk(data.text || "");
+            }
+            break;
+          case "chunk":
+            if (pending.onChunk && data) {
+              pending.onChunk(data.content || "");
+            }
+            break;
+          case "done":
+            this.pendingRequests.delete(id);
+            pending.resolve(event.data);
+            break;
+          case "error":
+            this.pendingRequests.delete(id);
+            pending.reject(new Error(data?.message || "Worker error"));
+            break;
+        }
+      };
+      this.worker.onerror = (error) => {
+        console.error("[AIService] Worker error:", error);
+      };
+    } catch (e) {
+      console.warn("[AIService] Failed to create worker, falling back to main thread:", e);
+    }
+  }
+
+  private postToWorker(
+    message: WorkerMessage,
+    onChunk?: (text: string) => void
+  ): Promise<WorkerResponse> {
+    return new Promise((resolve, reject) => {
+      if (!this.worker) {
+        reject(new Error("Worker not available"));
+        return;
+      }
+      this.pendingRequests.set(message.id, { resolve, reject, onChunk });
+      this.worker.postMessage(message);
+    });
+  }
+
+  async initEngine(
+    modelId: string,
+    onProgress: (progress: { text: string; percent: number }) => void,
+    signal?: AbortSignal
+  ): Promise<boolean> {
+    if (modelId === "mock-assistant") {
+      this.currentModelId = modelId;
+      return true;
+    }
+
+    if (this.currentModelId === modelId) {
+      return true;
+    }
+
+    const id = `init-${++this.requestId}`;
+
+    if (signal) {
+      signal.addEventListener("abort", () => {
+        this.cancelRequest(id);
+      });
+    }
+
+    try {
+      await this.postToWorker(
+        {
+          type: "init",
+          id,
+          payload: { modelId },
+        },
+        (text) => {
+          onProgress({ text, percent: 0 });
+        }
+      );
+      this.currentModelId = modelId;
+      return true;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes("shader-f16")) {
+        this.currentModelId = "mock-assistant";
+      }
+      throw e;
+    }
+  }
+
   isEngineActive(): boolean {
-    return this.engine !== null || this.currentModelId === "mock-assistant";
+    return this.currentModelId !== "" || this.worker !== null;
   }
 
   getCurrentModel(): string {
@@ -263,66 +331,52 @@ export class AIService {
     return this.currentModelId.includes("vision") || this.currentModelId.includes("vl");
   }
 
-  // Chat completion supporting streaming chunks and vision
   async getChatCompletion(
     messages: ChatMessage[],
     onChunk: (chunk: string) => void,
     imageBase64?: string,
     systemPrompt?: string,
+    signal?: AbortSignal
   ): Promise<string> {
-    const lastUserMessage = messages[messages.length - 1]?.text || "";
-
-    if (this.currentModelId === "mock-assistant" || !this.engine) {
-      return this.runMockCompletion(lastUserMessage, onChunk);
+    if (this.currentModelId === "mock-assistant" || !this.worker) {
+      return this.runMockCompletion(messages[messages.length - 1]?.text || "", onChunk);
     }
 
-    try {
-      const mlcMessages: any[] = [
-        {
-          role: "system",
-          content: systemPrompt || "You are a professional outreach assistant. If any context (Names, Companies, Dates, Jobs) is missing, strictly use [BRACKETS] e.g., [Hiring Manager Name] or [Company Name]. Do not hallucinate or make up details.",
-        },
-      ];
+    const id = `chat-${++this.requestId}`;
 
-      const lastId = messages.length > 0 ? messages[messages.length - 1].id : "";
-      for (const m of messages) {
-        if (m.sender === "user" && imageBase64 && m.id === lastId) {
-          mlcMessages.push({
-            role: "user",
-            content: [
-              { type: "text", text: m.text },
-              { type: "image_url", image_url: { url: imageBase64 } },
-            ],
-          });
-        } else {
-          mlcMessages.push({
-            role: m.sender === "user" ? "user" : "assistant",
-            content: m.text,
-          });
-        }
-      }
-
-      const response = this.engine.chatCompletion({
-        messages: mlcMessages,
-        stream: true,
+    if (signal) {
+      signal.addEventListener("abort", () => {
+        this.cancelRequest(id);
       });
+    }
 
-      let fullText = "";
-      for await (const chunk of response) {
-        const delta = chunk.choices[0]?.delta?.content || "";
-        fullText += delta;
-        onChunk(fullText);
-      }
-      return fullText;
+    const mlcMessages = messages.map((m) => ({
+      role: m.sender === "user" ? "user" : "assistant",
+      content: m.text,
+    }));
+
+    try {
+      const result = await this.postToWorker(
+        {
+          type: "chat",
+          id,
+          payload: {
+            messages: mlcMessages,
+            systemPrompt,
+            imageBase64,
+          },
+        },
+        onChunk
+      );
+      return result.data?.content || "";
     } catch (e) {
-      console.error("Stream failed. Falling back to rule-based engine.", e);
+      console.error("Worker chat failed, falling back to mock:", e);
+      const lastUserMessage = messages[messages.length - 1]?.text || "";
       return this.runMockCompletion(lastUserMessage, onChunk);
     }
   }
 
-  // Generate automated outreach email template from job text using mock simulator
-  generateDraftFromJob(jobText: string, subject: string): string {
-    // Extraction rules
+  generateDraftFromJob(jobText: string): string {
     const titleRegex = /(?:job title|role|position|looking for a|seeking a)\s*:\s*([^\n,.]+)/i;
     const companyRegex = /(?:company|organization|at|client)\s*:\s*([^\n,.]+)/i;
     const contactRegex = /(?:contact|hiring manager|recruiter|write to|apply to)\s*:\s*([^\n,.]+)/i;
@@ -331,12 +385,10 @@ export class AIService {
     const companyMatch = jobText.match(companyRegex);
     const contactMatch = jobText.match(contactRegex);
 
-    // Default parameters with [Brackets] if missing
     const jobTitle = titleMatch ? titleMatch[1].trim() : "[Job Title]";
     const companyName = companyMatch ? companyMatch[1].trim() : "[Company Name]";
     const contactName = contactMatch ? contactMatch[1].trim() : "[Hiring Manager Name]";
 
-    // Detect skills
     const skillsList: string[] = [];
     ["react", "next.js", "typescript", "tailwind", "node.js", "python", "vulkan", "webgpu", "rust"].forEach((skill) => {
       if (jobText.toLowerCase().includes(skill)) {
@@ -352,7 +404,7 @@ I recently reviewed the opening for the ${jobTitle} position at ${companyName} a
 
 With a solid background in software development and specific hands-on experience in ${skillsString}, I am confident in my ability to contribute effectively to your engineering team. In my previous roles, I have specialized in building responsive frontend applications and high-performance services that align closely with the requirements outlined in your job description.
 
-I would welcome the opportunity to discuss how my skillset and background align with ${companyName}'s current goals. 
+I would welcome the opportunity to discuss how my skillset and background align with ${companyName}'s current goals.
 
 Thank you for your time and consideration.
 
@@ -361,7 +413,6 @@ Best regards,
 [Your Contact Information]`;
   }
 
-  // Smart Simulator for Chat Messages
   private async runMockCompletion(
     userMessage: string,
     onChunk: (chunk: string) => void
@@ -370,14 +421,13 @@ Best regards,
     let reply = "";
 
     if (text.includes("hello") || text.includes("hi ") || text.includes("hey")) {
-      reply = `Hello! I am your offline AI Email Orchestrator. 
+      reply = `Hello! I am your offline AI Email Orchestrator.
 
 Since WebGPU hardware acceleration is not running or active, I am running in Rule-based Simulation mode. I can help you draft cold outreach messages based on job descriptions.
 
 Try asking me: "Draft an email for a React developer position."`;
     } else if (text.includes("draft") || text.includes("email") || text.includes("job")) {
-      // Simulate draft template generation
-      reply = `I would be happy to draft an outreach template for you! 
+      reply = `I would be happy to draft an outreach template for you!
 
 Here is a structured draft based on standard email rules:
 
@@ -385,7 +435,7 @@ Subject: Application for [Job Title] - [Your Name]
 
 Dear [Hiring Manager Name],
 
-I am writing to express my interest in the [Job Title] role at [Company Name]. 
+I am writing to express my interest in the [Job Title] role at [Company Name].
 
 Based on my background in [Your Key Skill] and experience delivering robust technical solutions, I am eager to discuss how I can contribute to your team. I appreciate the focus on technical excellence at [Company Name] and would love to support your mission.
 
@@ -399,7 +449,7 @@ Best regards,
     } else {
       reply = `I received your message: "${userMessage}".
 
-I am currently running in Offline Smart Fallback mode. I can assist in generating structured email templates with [Brackets] for personalization. 
+I am currently running in Offline Smart Fallback mode. I can assist in generating structured email templates with [Brackets] for personalization.
 
 To create a new email draft:
 1. Go to the "Inbox" or "Drafts" folder.
@@ -407,18 +457,39 @@ To create a new email draft:
 3. Fill in details and click "Generate AI Pitch" to apply smart placeholders.`;
     }
 
-  // Simulate streaming response
-  const words = reply.split(" ");
-  let currentText = "";
-  for (let i = 0; i < words.length; i++) {
-    currentText += (i === 0 ? "" : " ") + words[i];
-    onChunk(currentText);
-    await new Promise((resolve) => setTimeout(resolve, 35));
+    const words = reply.split(" ");
+    let currentText = "";
+    for (let i = 0; i < words.length; i++) {
+      currentText += (i === 0 ? "" : " ") + words[i];
+      onChunk(currentText);
+      await new Promise((resolve) => setTimeout(resolve, 35));
+    }
+
+    return reply;
   }
 
-  return reply;
-}
+  private cancelRequest(id: string) {
+    const pending = this.pendingRequests.get(id);
+    if (pending) {
+      this.pendingRequests.delete(id);
+      pending.reject(new Error("Request cancelled"));
+    }
+    if (this.worker) {
+      this.worker.postMessage({ type: "cancel", id });
+    }
+  }
+
+  cancelAllRequests() {
+    for (const [id] of this.pendingRequests) {
+      this.cancelRequest(id);
+    }
+  }
+
+  destroy() {
+    this.cancelAllRequests();
+    this.worker?.terminate();
+    this.worker = null;
+  }
 }
 
-// Singleton helper instance
 export const aiService = new AIService();

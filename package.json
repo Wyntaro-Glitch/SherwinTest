@@ -13,6 +13,7 @@
   "dependencies": {
     "@mlc-ai/web-llm": "^0.2.84",
     "@next/bundle-analyzer": "^16.2.10",
+    "@react-pdf/renderer": "^4.5.1",
     "@tanstack/react-virtual": "^3.14.5",
     "next": "16.2.9",
     "nodemailer": "^9.0.3",

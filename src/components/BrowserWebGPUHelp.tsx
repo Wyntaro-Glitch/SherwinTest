@@ -3,6 +3,15 @@
 import { useState, useEffect } from "react";
 import { detectBrowser, getFlagsInstructions, BrowserDetectionResult } from "@/utils/browser";
 
+const BROWSERS = [
+  { name: "chrome", label: "Chrome", supported: true, note: "v113+, Stable" },
+  { name: "edge", label: "Edge", supported: true, note: "v113+, Stable" },
+  { name: "brave", label: "Brave", supported: true, note: "Flag required: Unsafe WebGPU" },
+  { name: "opera", label: "Opera", supported: true, note: "Flag required: Unsafe WebGPU" },
+  { name: "firefox", label: "Firefox", supported: true, note: "Flag required: dom.webgpu.enabled" },
+  { name: "safari", label: "Safari", supported: true, note: "Flag required: Experimental Features" },
+] as const;
+
 export default function BrowserWebGPUHelp() {
   const [browser, setBrowser] = useState<BrowserDetectionResult | null>(null);
 
@@ -18,19 +27,19 @@ export default function BrowserWebGPUHelp() {
   const browserIcon = () => {
     switch (browser.name) {
       case "brave":
-        return "🦁";
+        return "\uD83E\uDD81";
       case "chrome":
-        return "🌐";
+        return "\uD83C\uDF10";
       case "edge":
-        return "🔷";
+        return "\uD83D\uDD37";
       case "firefox":
-        return "🦊";
+        return "\uD83E\uDD8A";
       case "safari":
-        return "🧭";
+        return "\uD83E\uDDED";
       case "opera":
-        return "🔴";
+        return "\uD83D\uDD34";
       default:
-        return "🌍";
+        return "\uD83C\uDF0D";
     }
   };
 
@@ -81,6 +90,33 @@ export default function BrowserWebGPUHelp() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Browser Compatibility Checklist */}
+      <div className="border-t border-slate-700/50 pt-3">
+        <p className="font-semibold text-slate-300 mb-2">Browser WebGPU Support</p>
+        <div className="grid grid-cols-2 gap-1.5">
+          {BROWSERS.map((b) => {
+            const isCurrent = b.name === browser.name;
+            return (
+              <div
+                key={b.name}
+                className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[11px] ${
+                  isCurrent
+                    ? "bg-indigo-500/10 border border-indigo-500/30 text-indigo-300"
+                    : "bg-slate-950/40 border border-slate-800 text-slate-400"
+                }`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${b.supported ? "bg-emerald-500" : "bg-slate-600"}`} />
+                <span className="font-medium">{b.label}</span>
+                <span className="text-slate-500 ml-auto">{b.note}</span>
+              </div>
+            );
+          })}
+        </div>
+        <p className="text-[10px] text-slate-500 mt-2">
+          All listed browsers support WebGPU. Chrome and Edge work out of the box; others require a flag.
+        </p>
       </div>
     </div>
   );

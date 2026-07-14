@@ -4,7 +4,7 @@ import { useTheme } from "./ThemeProvider";
 import { ThemeName } from "@/types";
 
 const THEMES: { id: ThemeName; label: string; desc: string; icon: string }[] = [
-  { id: "dark", label: "Dark", desc: "Easy on the eyes", icon: "🌙" },
+  { id: "dark", label: "OLED Dark", desc: "True black, saves battery", icon: "⬛" },
   { id: "light", label: "Light", desc: "Clean and bright", icon: "☀️" },
   { id: "cyberpunk", label: "Cyberpunk", desc: "Neon glow", icon: "⚡" },
   { id: "sakura", label: "Sakura", desc: "Cherry blossom pink", icon: "🌸" },
@@ -19,7 +19,7 @@ export default function AppearanceSettings() {
     <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col gap-5">
       <div>
         <h3 className="text-base font-bold text-white mb-1">Appearance</h3>
-        <p className="text-xs text-slate-500">Choose your color theme.</p>
+        <p className="text-xs text-slate-500">Choose your color theme. OLED Dark uses true black for AMOLED screens.</p>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">

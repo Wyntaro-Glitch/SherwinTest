@@ -18,14 +18,14 @@ export const useTheme = () => useContext(ThemeContext);
 const STORAGE_KEY = "sherwin_theme";
 
 export default function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<ThemeName>("dark");
-
-  useEffect(() => {
+  const [theme, setThemeState] = useState<ThemeName>(() => {
+    if (typeof window === "undefined") return "dark";
     const stored = localStorage.getItem(STORAGE_KEY) as ThemeName | null;
     if (stored && ["dark", "light", "cyberpunk", "sakura", "forest", "ocean"].includes(stored)) {
-      setThemeState(stored);
+      return stored;
     }
-  }, []);
+    return "dark";
+  });
 
   const setTheme = (t: ThemeName) => {
     setThemeState(t);

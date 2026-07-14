@@ -122,12 +122,12 @@ export async function detectWebGPUSupport(): Promise<WebGPUDetectionResult> {
     result.adapterCreated = true;
 
     // Retrieve GPU details
-    let info: any = {};
+    let info: { vendor?: string; architecture?: string; device?: string; description?: string } = {};
     if ("info" in adapter) {
-      info = (adapter as any).info;
-    } else if (typeof (adapter as any).requestAdapterInfo === "function") {
+      info = (adapter as unknown as { info: typeof info }).info;
+    } else if (typeof (adapter as unknown as { requestAdapterInfo?: () => Promise<typeof info> }).requestAdapterInfo === "function") {
       try {
-        info = await (adapter as any).requestAdapterInfo();
+        info = await (adapter as unknown as { requestAdapterInfo: () => Promise<typeof info> }).requestAdapterInfo();
       } catch (e) {
         console.warn("Failed to request adapter info:", e);
       }
@@ -162,17 +162,17 @@ export async function detectWebGPUSupport(): Promise<WebGPUDetectionResult> {
     // Attempt to request device with required features to verify full driver support
     try {
       const device = await adapter.requestDevice({
-        requiredFeatures: hasShaderF16 ? (["shader-f16"] as any) : [],
+        requiredFeatures: hasShaderF16 ? (["shader-f16"] as GPUFeatureName[]) : [],
       });
       if (device) {
         result.deviceCreated = true;
         device.destroy();
       }
-    } catch (deviceError: any) {
-      result.error = `Failed to create WebGPU device: ${deviceError?.message || deviceError}`;
+    } catch (deviceError: unknown) {
+      result.error = `Failed to create WebGPU device: ${deviceError instanceof Error ? deviceError.message : String(deviceError)}`;
     }
-  } catch (adapterError: any) {
-    result.error = `WebGPU adapter error: ${adapterError?.message || adapterError}`;
+  } catch (adapterError: unknown) {
+    result.error = `WebGPU adapter error: ${adapterError instanceof Error ? adapterError.message : String(adapterError)}`;
   }
 
   return result;

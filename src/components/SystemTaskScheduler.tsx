@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { SystemTaskStatus } from "@/types";
 import { useErrorMonitorStore } from "@/stores/errorMonitorStore";
 import { useUserMemoryStore } from "@/stores/userMemoryStore";
@@ -29,13 +29,9 @@ function saveTasks(tasks: SystemTaskStatus[]) {
 }
 
 export default function SystemTaskScheduler() {
-  const [tasks, setTasks] = useState<SystemTaskStatus[]>([]);
+  const [tasks, setTasks] = useState<SystemTaskStatus[]>(() => loadTasks());
   const addError = useErrorMonitorStore((s) => s.addError);
   const clearAllMemories = useUserMemoryStore((s) => s.clearAllMemories);
-
-  useEffect(() => {
-    setTasks(loadTasks());
-  }, []);
 
   const runTask = useCallback(async (id: string) => {
     setTasks((prev) => {

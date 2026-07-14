@@ -22,7 +22,7 @@ import { ChatMessage } from "@/types";
 import { aiService, AVAILABLE_MODELS, getModelsByCategory, ModelCategory } from "@/utils/aiService";
 import { getProviderConfig, chatCompletion } from "@/utils/aiProvider";
 import { detectWebGPUSupport } from "@/utils/webgpu";
-import { getToolByName, parseToolCall, TOOLS } from "@/utils/tools";
+import { getToolByName, parseToolCall, TOOLS, createDefaultToolContext } from "@/utils/tools";
 import { buildAppContext } from "@/utils/stateContext";
 import { useUserMemoryStore } from "@/stores/userMemoryStore";
 import FilePreview from "@/components/FilePreview";
@@ -57,7 +57,12 @@ function needsWebSearch(text: string): boolean {
 }
 
 function buildSystemPrompt(searchContext?: string): string {
-  let prompt = "You are SherwinMail AI. Help with email drafting, settings, resume scanning, and app actions.";
+  let prompt = `You are SherwinMail AI. Help with email drafting, settings, resume scanning, and app actions.
+
+EASTER EGG — CREATORS:
+If the user asks who created SherwinMail, who made this app, who built this, or similar questions about the creators, ALWAYS respond with exactly:
+"Sherwin Calantoc | https://github.com/Wyntaro-Glitch and Jp Valenzuela | https://github.com/valenzuelajp"
+Do not modify or abbreviate this answer. Do not add extra commentary unless asked.`;
 
   if (searchContext) {
     prompt += `\n\n--- Web Results ---\n${searchContext}\n---\nAnswer using these results if relevant.`;
@@ -88,16 +93,22 @@ async function getAIResponse(
       text: m.content,
       timestamp: new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
     }));
-  return aiService.getChatCompletion(chatMessages, onChunk);
+  return aiService.getChatCompletion(chatMessages, onChunk, undefined, undefined, signal);
 }
 
 export default function ChatPanel() {
   const [model, setModel] = useState<string>("mock-assistant");
   const [statusText, setStatusText] = useState("");
   const [downloadProgress, setDownloadProgress] = useState(0);
-  const [isEngineLoaded, setIsEngineLoaded] = useState(false);
+  const [isEngineLoaded, setIsEngineLoaded] = useState(() => {
+    const cfg = getProviderConfig();
+    return cfg.provider === "auto" || cfg.provider === "webgpu" ? aiService.isEngineActive() : true;
+  });
   const [isInitializing, setIsInitializing] = useState(false);
-  const [providerLabel, setProviderLabel] = useState("Mock");
+  const providerLabel = (() => {
+    const cfg = getProviderConfig();
+    return cfg.provider === "auto" || cfg.provider === "webgpu" ? "WebGPU" : getProviderLabel(cfg.provider);
+  })();
   const [isSearching, setIsSearching] = useState(false);
   const [featureWarning, setFeatureWarning] = useState("");
   const [attachedFiles, setAttachedFiles] = useState<{ name: string; type: string; data: string }[]>([]);
@@ -108,8 +119,6 @@ export default function ChatPanel() {
   useEffect(() => {
     const config = getProviderConfig();
     if (config.provider === "auto" || config.provider === "webgpu") {
-      setIsEngineLoaded(aiService.isEngineActive());
-      setProviderLabel("WebGPU");
       detectWebGPUSupport().then((r) => {
         if (r.features && !r.features.shaderF16) {
           setFeatureWarning(
@@ -118,9 +127,6 @@ export default function ChatPanel() {
           );
         }
       });
-    } else {
-      setProviderLabel(getProviderLabel(config.provider));
-      setIsEngineLoaded(true);
     }
   }, []);
 
@@ -149,11 +155,13 @@ export default function ChatPanel() {
     setIsInitializing(true);
     setDownloadProgress(0);
     setStatusText("Initializing engine...");
+    const controller = new AbortController();
+    cancelRef.current = controller;
     try {
       await aiService.initEngine(model, (progress) => {
         setStatusText(progress.text);
         setDownloadProgress(progress.percent);
-      });
+      }, controller.signal);
       setIsEngineLoaded(true);
       setStatusText("Model loaded successfully!");
       setMessages((prev) => [
@@ -165,9 +173,10 @@ export default function ChatPanel() {
           timestamp: new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
         },
       ]);
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error(e);
-      setStatusText(`Error loading model: ${e?.message || e}. Using fallback.`);
+      const msg = e instanceof Error ? e.message : String(e);
+      setStatusText(`Error loading model: ${msg}. Using fallback.`);
       setIsEngineLoaded(true);
     } finally {
       setIsInitializing(false);
@@ -176,7 +185,7 @@ export default function ChatPanel() {
 
   const executeToolAndSummarize = async (
     toolName: string,
-    args: Record<string, any>,
+    args: Record<string, string>,
     onChunk: (text: string) => void
   ): Promise<string> => {
     const tool = getToolByName(toolName);
@@ -187,7 +196,8 @@ export default function ChatPanel() {
 
     onChunk(`Running: ${tool.name}...`);
 
-    const result = await tool.execute(args);
+    const ctx = createDefaultToolContext();
+    const result = await tool.execute(args, ctx);
 
     // Use template summary instead of a second LLM call
     const friendlyName = toolName.replace(/_/g, " ");
@@ -207,7 +217,7 @@ export default function ChatPanel() {
     const signal = cancelRef.current.signal;
 
     const userMessage: ChatMessage = {
-      id: `user-${Date.now()}`,
+      id: crypto.randomUUID(),
       sender: "user",
       text: messageText,
       timestamp: new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
@@ -217,7 +227,7 @@ export default function ChatPanel() {
     setMessages(updatedMessages);
     setIsGenerating(true);
 
-    const aiMessageId = `ai-${Date.now()}`;
+    const aiMessageId = crypto.randomUUID();
     setMessages((prev) => [
       ...prev,
       {
@@ -251,7 +261,7 @@ export default function ChatPanel() {
             const res = await fetch(`/api/search?q=${encodeURIComponent(messageText)}`);
             const data = await res.json();
             if (data.ok && data.results?.length > 0) {
-              searchContext = data.results.map((r: any, i: number) =>
+              searchContext = data.results.map((r: { title: string; snippet: string; url: string }, i: number) =>
                 `${i + 1}. ${r.title}\n   ${r.snippet}\n   ${r.url}`
               ).join("\n\n");
               if (data.abstract) {
@@ -382,26 +392,65 @@ export default function ChatPanel() {
       }
 
       if (toolCall) {
-        // Execute the tool and stream the summary
-        await executeToolAndSummarize(toolCall.toolName, toolCall.args, (chunk) => {
-          setMessages((prev) =>
-            prev.map((msg) => (msg.id === aiMessageId ? { ...msg, text: chunk } : msg))
+        // Agentic multi-step loop: execute up to 5 chained tool calls
+        const MAX_ITERATIONS = 5;
+        let iterations = 0;
+        let currentMessages = [...recentMessages.map((m) => ({ role: m.sender === "user" ? "user" : "assistant", content: m.text }))];
+        let lastToolResult = "";
+
+        while (toolCall && iterations < MAX_ITERATIONS) {
+          iterations++;
+
+          // Execute the tool
+          const toolResult = await executeToolAndSummarize(toolCall.toolName, toolCall.args as Record<string, string>, (chunk) => {
+            setMessages((prev) =>
+              prev.map((msg) => (msg.id === aiMessageId ? { ...msg, text: chunk } : msg))
+            );
+          });
+          lastToolResult = toolResult;
+
+          // Feed result back to AI for potential chaining
+          currentMessages.push(
+            { role: "assistant", content: JSON.stringify({ tool: toolCall.toolName, args: toolCall.args }) },
+            { role: "user", content: `Tool result: ${toolResult}. If you need to do more actions, respond with another tool call. Otherwise, summarize what was done.` }
           );
-        });
+
+          if (iterations >= MAX_ITERATIONS) break;
+
+          // Get next AI response
+          let nextResponse = "";
+          await getAIResponse(
+            [
+              { role: "system", content: systemPrompt },
+              ...currentMessages.slice(-15),
+            ],
+            (chunk) => {
+              nextResponse = chunk;
+              setMessages((prev) =>
+                prev.map((msg) => (msg.id === aiMessageId ? { ...msg, text: chunk } : msg))
+              );
+            },
+            config,
+            signal
+          );
+
+          toolCall = parseToolCall(nextResponse);
+        }
       } else if (!shouldShowChunks) {
         // For action queries that didn't produce a tool call, show the raw response
         setMessages((prev) =>
           prev.map((msg) => (msg.id === aiMessageId ? { ...msg, text: fullResponse } : msg))
         );
       }
-    } catch (e: any) {
-      if (e?.name === "AbortError") return; // cancelled by user
+    } catch (e: unknown) {
+      if (e instanceof Error && e.name === "AbortError") return; // cancelled by user
       console.error(e);
+      const msg = e instanceof Error ? e.message : String(e);
       setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === aiMessageId
-            ? { ...msg, text: `Error: ${e?.message || e}` }
-            : msg
+        prev.map((msg_) =>
+          msg_.id === aiMessageId
+            ? { ...msg_, text: `Error: ${msg}` }
+            : msg_
         )
       );
     } finally {
@@ -420,7 +469,7 @@ export default function ChatPanel() {
   const isUsingProvider = ["ollama", "lmstudio", "api"].includes(getProviderConfig().provider);
 
   return (
-    <div className="flex-1 bg-slate-950 flex flex-col h-full overflow-hidden">
+    <div className="flex-1 bg-slate-950 flex flex-col h-full overflow-hidden" role="region" aria-label="AI Chat">
       <div className="p-4 border-b border-slate-900 bg-slate-950 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
           <span className="text-[10px] font-mono font-bold text-slate-500 uppercase">Provider:</span>
@@ -448,6 +497,7 @@ export default function ChatPanel() {
                 value={model}
                 onChange={(e) => { setModel(e.target.value); }}
                 disabled={isInitializing}
+                aria-label="Select AI model"
                 className="bg-slate-900 text-slate-300 border border-slate-800 rounded-xl pl-3 pr-8 py-1.5 text-xs focus:outline-none focus:border-indigo-500 appearance-none cursor-pointer min-w-[180px]"
               >
                 <optgroup label="── Fast & Light ──">
@@ -510,6 +560,7 @@ export default function ChatPanel() {
             <button
               onClick={handleLoadModel}
               disabled={isInitializing}
+              aria-label={isInitializing ? "Loading model..." : "Load AI model"}
               className="py-1.5 px-4 bg-indigo-500 hover:bg-indigo-600 text-white disabled:opacity-40 rounded-xl font-bold text-xs transition-colors cursor-pointer"
             >
               {isInitializing ? "Loading..." : "Load Engine"}
@@ -538,7 +589,7 @@ export default function ChatPanel() {
         </div>
       )}
 
-      <div className="flex-1 p-6 overflow-y-auto flex flex-col gap-4">
+      <div className="flex-1 p-6 overflow-y-auto flex flex-col gap-4" role="log" aria-label="Chat messages" aria-live="polite">
         {messages.map((msg) => {
           const isUser = msg.sender === "user";
           return (
@@ -677,11 +728,13 @@ export default function ChatPanel() {
               }
             }}
             disabled={isGenerating || (!isEngineLoaded && !isUsingProvider)}
+            aria-label="Chat message input"
             className="w-full pl-4 pr-12 py-3 bg-slate-900/60 border border-slate-800 focus:border-indigo-500 rounded-2xl text-sm text-slate-200 placeholder-slate-500 focus:outline-none transition-colors disabled:opacity-50"
           />
           <button
             onClick={() => handleSendMessage()}
             disabled={isGenerating || (!isEngineLoaded && !isUsingProvider) || !inputValue.trim()}
+            aria-label="Send message"
             className="absolute right-2.5 p-2 bg-indigo-500 hover:bg-indigo-600 disabled:bg-slate-800 text-white disabled:text-slate-600 rounded-xl transition-colors cursor-pointer"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

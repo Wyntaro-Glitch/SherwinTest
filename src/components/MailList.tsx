@@ -10,7 +10,7 @@ interface MailListProps {
 }
 
 function normalizeSubject(subject: string): string {
-  return subject
+  return (subject || "")
     .replace(/^(Re:\s*|Fwd:\s*|\[.*?\]\s*)*/i, "")
     .replace(/\s*\(\d+\)\s*$/, "")
     .trim();
@@ -40,10 +40,10 @@ const MailList = memo(function MailList({
         .filter((e) => e.status === folder)
         .filter(
           (e) =>
-            e.subject.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            e.to.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            e.from.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            e.body.toLowerCase().includes(searchQuery.toLowerCase())
+            (e.subject || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (e.to || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (e.from || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (e.body || "").toLowerCase().includes(searchQuery.toLowerCase())
         ),
     [emails, folder, searchQuery]
   );

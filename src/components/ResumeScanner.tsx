@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { MessageContentPart } from "@/types";
 import { getProviderConfig, chatCompletion } from "@/utils/aiProvider";
+import { ResumePDFDownload } from "./ResumePDF";
 
 interface ChatMessage {
   id: string;
@@ -16,7 +17,7 @@ function formatTime() {
 }
 
 function buildSystemPrompt(resumeText: string): string {
-  return `You are a senior resume writer and career development expert.
+  return `You are a senior resume writer and career development expert specializing in ATS-optimized resumes.
 
 The user has uploaded the following resume content. Use your knowledge of their industry, role, and current market trends to help them improve it.
 
@@ -25,19 +26,48 @@ Current resume content:
 ${resumeText}
 ---
 
+ATS COMPATIBILITY RULES (MUST FOLLOW):
+- Use single-column layout with standard section headings: "Professional Summary", "Work Experience", "Skills", "Education", "Certifications"
+- Never use creative headings like "My Journey" or "What I Bring"
+- Use standard sans-serif formatting
+- No tables, columns, text boxes, or graphics
+- Include keywords from the user's target role/industry naturally throughout
+
+ACHIEVEMENT-DRIVEN CONTENT RULES:
+- Every bullet point MUST follow the Action + Context + Result formula
+- Start with a strong action verb (e.g., "Drove", "Resolved", "Built", "Reduced", "Increased", "Led", "Implemented")
+- Quantify 60-80% of bullet points with specific metrics: numbers, percentages, dollar amounts, or volume
+- If exact numbers are unavailable, use estimates ("approximately", "over") or proxies (volume handled, frequency)
+- Weak: "Responsible for sales" → Strong: "Drove a 25% increase in monthly sales by optimizing product displays"
+- Weak: "Managed customer support" → Strong: "Resolved 40+ requests per day with a 96% satisfaction rating"
+
+PROFESSIONAL SUMMARY RULES:
+- 3-5 sentences connecting past experience to target role
+- Include 2-3 primary skills as keywords
+- End with value proposition
+
+SKILLS SECTION RULES:
+- Group related skills for readability
+- Include both technical and soft skills
+- Mirror keywords from target job descriptions
+- Use industry-standard terminology
+
 Your responsibilities:
 - Analyze the resume for structure, gaps, grammar, and ATS compatibility
-- Suggest improvements with strong action verbs and quantified achievements
-- Generate complete updated versions when asked
+- Rewrite all bullet points using the Action + Context + Result formula with quantified achievements
+- Ensure every section uses standard ATS headings
+- Integrate relevant industry keywords naturally
 - Use [BRACKETS] only for truly unknown personal details (phone, email, address)
 - Never hallucinate job titles, companies, or credentials the user hasn't provided
+- Preserve the user's actual experience and achievements — enhance, don't fabricate
 
-When the user asks you to "auto-generate" or "update" the resume, produce a complete polished version with:
-1. Professional Summary
-2. Skills (relevant to their field, including current keywords)
-3. Professional Experience (with action verbs and metrics)
-4. Education
-5. Certifications (if applicable)`;
+When the user asks you to "auto-generate" or "update" the resume, produce a complete ATS-optimized version with these sections:
+1. Professional Summary (3-5 sentences, keyword-rich)
+2. Skills (grouped by category, matching target role keywords)
+3. Work Experience (reverse-chronological, achievement-driven bullets with metrics)
+4. Projects (if applicable, with technical details)
+5. Education (degree, school, dates)
+6. Certifications (with issuing organizations)`;
 }
 
 export default function ResumeScanner() {
@@ -86,17 +116,14 @@ export default function ResumeScanner() {
       content: extra || "Analyze my resume — identify strengths, gaps, ATS issues, and suggest specific improvements.",
       timestamp: formatTime(),
     };
-    setMessages((prev) => [...prev, userMsg]);
-    setIsGenerating(true);
 
     const aiId = `ai-${Date.now()}`;
-    setMessages((prev) => [
-      ...prev,
-      { id: aiId, role: "assistant", content: "", timestamp: formatTime() },
-    ]);
+    setMessages((prev) => [...prev, userMsg, { id: aiId, role: "assistant", content: "", timestamp: formatTime() }]);
+    setIsGenerating(true);
 
     try {
       let full = "";
+      let lastUpdate = 0;
       const analysisPrompt = buildSystemPrompt(resumeText) +
         `\n\nThe user just uploaded "${fileName}" (${wordCount} words). ` +
         "Provide a brief analysis: structure, strengths, gaps, and 2-3 specific improvements.";
@@ -108,9 +135,15 @@ export default function ResumeScanner() {
         ],
         onChunk: (chunk) => {
           full = chunk;
-          setMessages((prev) => prev.map((m) => (m.id === aiId ? { ...m, content: full } : m)));
+          const now = Date.now();
+          if (now - lastUpdate > 100) {
+            lastUpdate = now;
+            setMessages((prev) => prev.map((m) => (m.id === aiId ? { ...m, content: full } : m)));
+          }
         },
       });
+
+      setMessages((prev) => prev.map((m) => (m.id === aiId ? { ...m, content: full } : m)));
     } catch {
       setMessages((prev) =>
         prev.map((m) =>
@@ -157,8 +190,13 @@ export default function ResumeScanner() {
       setResumeContent(data.text);
       setSourceType("pdf");
       await runAnalysis(data.text, file.name, `I uploaded my resume "${file.name}" (${data.wordCount} words, ${data.pageCount} page(s)). Analyze it and suggest improvements.`);
-    } catch (e: any) {
-      setUploadError(e?.message || "PDF upload failed.");
+
+      // Auto-generate enhanced version after analysis
+      if (data.text.trim()) {
+        setTimeout(() => autoGenerateFromText(data.text), 500);
+      }
+    } catch (e: unknown) {
+      setUploadError(e instanceof Error ? e.message : "PDF upload failed.");
     } finally {
       setIsUploading(false);
     }
@@ -203,8 +241,8 @@ export default function ResumeScanner() {
           setMessages((prev) => prev.map((m) => m.id === msgId ? { ...m, content: msgContent } : m));
 
           await runAnalysis(extractedText, file.name);
-        } catch (e: any) {
-          setUploadError(`Vision extraction failed: ${e?.message || e}. Try uploading a PDF instead.`);
+        } catch (e: unknown) {
+          setUploadError(`Vision extraction failed: ${e instanceof Error ? e.message : String(e)}. Try uploading a PDF instead.`);
         } finally {
           setIsGenerating(false);
           resolve();
@@ -231,17 +269,13 @@ export default function ResumeScanner() {
       timestamp: formatTime(),
     };
 
-    setMessages((prev) => [...prev, userMsg]);
-    setIsGenerating(true);
-
     const aiId = `ai-${Date.now()}`;
-    setMessages((prev) => [
-      ...prev,
-      { id: aiId, role: "assistant", content: "", timestamp: formatTime() },
-    ]);
+    setMessages((prev) => [...prev, userMsg, { id: aiId, role: "assistant", content: "", timestamp: formatTime() }]);
+    setIsGenerating(true);
 
     try {
       let full = "";
+      let lastUpdate = 0;
       await chatCompletion({
         messages: [
           { role: "system", content: buildSystemPrompt(resumeContent) },
@@ -250,15 +284,23 @@ export default function ResumeScanner() {
         ],
         onChunk: (chunk) => {
           full = chunk;
-          setMessages((prev) =>
-            prev.map((m) => (m.id === aiId ? { ...m, content: full } : m))
-          );
+          const now = Date.now();
+          if (now - lastUpdate > 100) {
+            lastUpdate = now;
+            setMessages((prev) =>
+              prev.map((m) => (m.id === aiId ? { ...m, content: full } : m))
+            );
+          }
         },
       });
-    } catch (e: any) {
+
+      setMessages((prev) =>
+        prev.map((m) => (m.id === aiId ? { ...m, content: full } : m))
+      );
+    } catch (e: unknown) {
       setMessages((prev) =>
         prev.map((m) =>
-          m.id === aiId ? { ...m, content: `Error: ${e?.message || e}. Check your AI provider settings.` } : m
+          m.id === aiId ? { ...m, content: `Error: ${e instanceof Error ? e.message : String(e)}. Check your AI provider settings.` } : m
         )
       );
     } finally {
@@ -266,8 +308,8 @@ export default function ResumeScanner() {
     }
   };
 
-  const handleAutoGenerate = async () => {
-    if (!resumeContent.trim() || isGenerating || isWebGPUBlocked) return;
+  const autoGenerateFromText = async (text: string) => {
+    if (!text.trim() || isWebGPUBlocked) return;
 
     const userMsg: ChatMessage = {
       id: `user-${Date.now()}`,
@@ -276,40 +318,61 @@ export default function ResumeScanner() {
       timestamp: formatTime(),
     };
 
-    setMessages((prev) => [...prev, userMsg]);
-    setIsGenerating(true);
-
     const aiId = `ai-${Date.now()}`;
-    setMessages((prev) => [
-      ...prev,
-      { id: aiId, role: "assistant", content: "", timestamp: formatTime() },
-    ]);
+    const aiMsg: ChatMessage = { id: aiId, role: "assistant", content: "", timestamp: formatTime() };
+
+    setMessages((prev) => [...prev, userMsg, aiMsg]);
+    setIsGenerating(true);
 
     try {
       let full = "";
-      const autoPrompt = buildSystemPrompt(resumeContent) + "\n\nNow produce the COMPLETE updated resume in a polished, ATS-optimized format.";
+      let lastUpdate = 0;
+      const autoPrompt = buildSystemPrompt(text) + `
+Now produce the COMPLETE updated resume. Follow these formatting rules exactly:
+
+1. Use ONLY these section headings (in this order): Professional Summary, Skills, Work Experience, Projects, Education, Certifications
+2. Every bullet point must use the Action + Context + Result formula with a quantified metric
+3. Work Experience must be in reverse-chronological order (newest first)
+4. Keep the resume to 1 page if possible, 2 pages maximum
+5. Use clean plain text formatting — no markdown, no tables, no special characters
+6. Each section title should be on its own line, followed by a blank line
+7. For Work Experience, format each entry as: "Job Title, Company (Dates)" followed by bullet points
+8. For Education, format as: "School Name" on one line, "Degree, Dates" on the next
+9. Preserve all original content — enhance the writing, don't remove sections`;
 
       await chatCompletion({
         messages: [
           { role: "system", content: autoPrompt },
-          { role: "user", content: "Generate the full updated resume with all sections." },
+          { role: "user", content: "Generate the full enhanced resume with all sections improved." },
         ],
         onChunk: (chunk) => {
           full = chunk;
-          setMessages((prev) =>
-            prev.map((m) => (m.id === aiId ? { ...m, content: full } : m))
-          );
+          const now = Date.now();
+          if (now - lastUpdate > 100) {
+            lastUpdate = now;
+            setMessages((prev) =>
+              prev.map((m) => (m.id === aiId ? { ...m, content: full } : m))
+            );
+          }
         },
       });
-    } catch (e: any) {
+
+      setMessages((prev) =>
+        prev.map((m) => (m.id === aiId ? { ...m, content: full } : m))
+      );
+    } catch (e: unknown) {
       setMessages((prev) =>
         prev.map((m) =>
-          m.id === aiId ? { ...m, content: `Error: ${e?.message || e}` } : m
+          m.id === aiId ? { ...m, content: `Error: ${e instanceof Error ? e.message : String(e)}` } : m
         )
       );
     } finally {
       setIsGenerating(false);
     }
+  };
+
+  const handleAutoGenerate = async () => {
+    await autoGenerateFromText(resumeContent);
   };
 
   const latestAiOutput = useMemo(
@@ -346,13 +409,19 @@ export default function ResumeScanner() {
             )}
           </div>
           {resumeContent && (
-            <button
-              onClick={acceptLatestOutput}
-              disabled={!latestAiOutput}
-              className="text-[10px] font-bold px-3 py-1.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-xl hover:bg-emerald-500/20 transition-colors disabled:opacity-30 cursor-pointer"
-            >
-              Apply AI Output to Editor
-            </button>
+            <div className="flex items-center gap-2">
+              <ResumePDFDownload
+                resumeText={resumeContent}
+                fileName={`${sourceFileName.replace(/\.pdf$/i, "") || "resume"}-enhanced.pdf`}
+              />
+              <button
+                onClick={acceptLatestOutput}
+                disabled={!latestAiOutput}
+                className="text-[10px] font-bold px-3 py-1.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-xl hover:bg-emerald-500/20 transition-colors disabled:opacity-30 cursor-pointer"
+              >
+                Apply AI Output to Editor
+              </button>
+            </div>
           )}
         </div>
 

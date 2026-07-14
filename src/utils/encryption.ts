@@ -19,7 +19,7 @@ async function getSessionKey(): Promise<CryptoKey> {
 
   const key = await crypto.subtle.generateKey(
     { name: ALGORITHM, length: KEY_LENGTH },
-    false,
+    true,
     ["encrypt", "decrypt"]
   );
 
